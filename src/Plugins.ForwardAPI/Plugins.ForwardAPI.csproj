@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Plugins.ForwardAPI</RootNamespace>
+    <AssemblyName>Plugins.ForwardAPI</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(RouterContractsProject)" />
+  </ItemGroup>
+</Project>

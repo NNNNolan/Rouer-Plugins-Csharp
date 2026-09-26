@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/plugins/">
+    <Project Path="src/Plugins.ForwardAPI/Plugins.ForwardAPI.csproj" />
+  </Folder>
+  <Folder Name="/sdk/">
+    <Project Path="src/Router.Contracts/Router.Contracts.csproj" />
+  </Folder>
+</Solution>

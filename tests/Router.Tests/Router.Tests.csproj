@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>Router.Tests</RootNamespace>
+    <!-- 与宿主的 InternalsVisibleTo 对齐；两个仓库的测试分别运行，不混装为同一个项目。 -->
+    <AssemblyName>Router.Tests</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(RouterContractsProject)" />
+    <ProjectReference Include="$(RouterHostRoot)/src/Router.Infrastructure/Router.Infrastructure.csproj" />
+    <ProjectReference Include="$(RouterHostRoot)/src/Router.Host/Router.Host.csproj" />
+    <ProjectReference Include="..\..\src\Plugins.ForwardAPI\Plugins.ForwardAPI.csproj" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
+    <PackageReference Include="MSTest.TestAdapter" Version="4.4.1" />
+    <PackageReference Include="MSTest.TestFramework" Version="4.4.1" />
+    <PackageReference Include="FluentAssertions" Version="8.11.0" />
+    <PackageReference Include="Moq" Version="4.20.72" />
+  </ItemGroup>
+  <Target Name="RequireHostCheckout" BeforeTargets="PrepareForBuild" Condition="'$(RouterHostRoot)' == ''">
+    <Error Text="请使用仓库根目录 test.ps1，或通过 -p:RouterHostRoot 指定 Router2API 检出目录。仅测试依赖宿主，插件构建可独立完成。" />
+  </Target>
+</Project>
