@@ -1,6 +1,6 @@
 # C# 开发教程：以 Plugins.ForwardAPI 为完整案例
 
-本教程直接讲解本仓库发布的 **Plugins.ForwardAPI**，不以 Echo 或未发布提供方作为主例。目标框架 .NET 10、Contracts 2.0。当前宿主源码引用暂时保留；后续由宿主 tag 发布 Router.Contracts 到 NuGet 后再迁移，本轮不建立发布工作流、不引用尚未发布的包。
+本教程直接讲解本仓库发布的 **Plugins.ForwardAPI**，不以 Echo 或未发布提供方作为主例。目标框架 .NET 10、Contracts 2.0。构建和单元测试使用本仓库 Contracts 源码快照；后续由宿主 tag 发布 Router.Contracts 到 NuGet 后再迁移，本轮不建立发布工作流、不引用尚未发布的包。
 
 入口：[SDK 总览](../README.md) · [能力参考](README.md) · [宿主生命周期](../HOST-LIFECYCLE.md) · [AI 工作单](../AI-DEVELOPMENT.md)。
 
@@ -39,7 +39,7 @@ pwsh -File ./build.ps1 -OutputDirectory ./artifacts/forwardapi-release
 
 输出为 `artifacts/forwardapi-release/forwardapi`，包括主 DLL、`.deps.json`、PDB/XML 和所需私有依赖。脚本排除 `Router.Contracts.*`，避免 loader 误判多个主程序集。目标目录非空时拒绝合并，下一次使用新发行目录。
 
-当前通过 `src/Router.Contracts` 快照独立编译。跨仓库测试传 `RouterHostRoot` 后，插件与测试共用该宿主的 Contracts，避免同名类型冲突。不要复制 `Router.Infrastructure` 来解决缺失 API；NuGet 迁移另行处理。
+插件和单元测试共用 `src/Router.Contracts` 快照，均可独立运行，不引用宿主实现。测试中通过 Contracts 接口 Mock 所需能力，不要复制或引用 `Router.Infrastructure` 来解决缺失 API；NuGet 迁移另行处理。
 
 ## 4. 终端如何注册
 
@@ -183,9 +183,9 @@ Copy-Item -LiteralPath $package.Path -Destination $plugins -Recurse
 ## 12. 测试和交付
 
 ```powershell
-pwsh -File ./test.ps1 -RouterHostRoot ../Router2API
+pwsh -File ./test.ps1
 ```
 
-测试暂时保留宿主源码依赖，等待后续 NuGet 方案。改动时补允许表、凭证保持、模型失败、原始字段、错误动作、流取消、未知签到响应、额度单位和并发更新用例。
+测试只验证插件自身，不包含宿主 DLL 加载器、任务发现或通用运行时测试，也不需要宿主源码。当前用例检查每日签到任务声明；后续按插件改动补允许表、凭证保持、模型失败、原始字段、错误动作、插件流取消、未知签到响应、额度单位和并发更新用例，外部能力通过 Contracts 接口 Mock。
 
 `git status` 只应包含 ForwardAPI、Contracts、文档和对应测试。不要用 `git add -f` 带回 `.local-only` 的其他提供方。许可证、NuGet token、tag 工作流及推送均需另行确认；本教程不自动发布。

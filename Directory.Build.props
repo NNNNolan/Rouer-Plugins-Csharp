@@ -8,8 +8,7 @@
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591;CA1711;CA1716;CA1822;CA1848;CA1873</NoWarn>
-    <!-- 普通构建使用本仓库的契约快照；跨仓库测试显式指定 RouterHostRoot，避免加载两套 Contracts。 -->
-    <RouterContractsProject Condition="'$(RouterContractsProject)' == '' and '$(RouterHostRoot)' != ''">$(RouterHostRoot)/src/Router.Contracts/Router.Contracts.csproj</RouterContractsProject>
+    <!-- 插件构建和单元测试共用本仓库的 Contracts 快照，不依赖宿主检出。 -->
     <RouterContractsProject Condition="'$(RouterContractsProject)' == ''">$(MSBuildThisFileDirectory)src/Router.Contracts/Router.Contracts.csproj</RouterContractsProject>
   </PropertyGroup>
 </Project>

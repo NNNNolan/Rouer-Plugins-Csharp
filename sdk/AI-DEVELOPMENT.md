@@ -72,7 +72,7 @@ OAuth 刷新   → refreshCredential + accounts.refresh → 并发/CAS/保留冷
 ### 第二步：让最小插件真正通过宿主加载
 
 - JS 主案例使用 js-forwardapi（参见 `Rouer-Plugins-js/plugins/js-forwardapi/src/plugin.ts`），测试只用 Node 模拟 ctx，不添加 C# 项目。
-- C# 主案例使用 [ForwardAPI](../src/Plugins.ForwardAPI/ForwardApiTerminal.cs)，仅引用 Contracts，源码测试依赖暂时保持现状。
+- C# 主案例使用 [ForwardAPI](../src/Plugins.ForwardAPI/ForwardApiTerminal.cs)，插件和单元测试仅依赖本仓库 Contracts。单元测试只验证插件自身，通过接口 Mock 宿主能力，不引入宿主实现或加载器测试。
 - 先通过类型/编译、清单/导出和无副作用模拟，再连接测试账号和网络。
 - 清单声明的所有 export 都必须实际存在；没有实现的 hook 不要先挂一个永远成功的空函数。
 - 模拟测试不证明真实 Jint、浏览器、计费或上游 SSE 已通过。
@@ -143,7 +143,7 @@ OAuth 刷新   → refreshCredential + accounts.refresh → 并发/CAS/保留冷
 
 ### 5.2 仓库内检查
 
-从当前仓库根目录运行对应检查；跨仓库测试依赖及首次安装步骤见根目录 README：
+从当前仓库根目录运行对应检查；构建和插件单元测试无需宿主源码，首次依赖还原说明见根目录 README：
 
 ```powershell
 dotnet build Plugins.slnx --disable-build-servers -m:1 -p:ConcurrentBuild=false -p:UseSharedCompilation=false
