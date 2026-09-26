@@ -1,6 +1,6 @@
 # C# 开发教程：以 Plugins.ForwardAPI 为完整案例
 
-本教程直接讲解本仓库发布的 **Plugins.ForwardAPI**，不以 Echo 或未发布提供方作为主例。目标框架 .NET 10、Contracts 2.0。构建和单元测试使用本仓库 Contracts 源码快照；后续由宿主 tag 发布 Router.Contracts 到 NuGet 后再迁移，本轮不建立发布工作流、不引用尚未发布的包。
+本教程直接讲解本仓库发布的 **Plugins.ForwardAPI**，不以 Echo 或未发布提供方作为主例。目标框架 .NET 10、Contracts 2.0。构建和单元测试从 nuget.org 还原 `Router.Contracts` 2.0.0，不需要宿主源码。
 
 入口：[SDK 总览](../README.md) · [能力参考](README.md) · [宿主生命周期](../HOST-LIFECYCLE.md) · [AI 工作单](../AI-DEVELOPMENT.md)。
 
@@ -24,22 +24,48 @@ ForwardAPI 将 NewAPI、Sub2API 和自定义兼容站点统一为 `forwardapi/<�
 | [账号管理](../../src/Plugins.ForwardAPI/ForwardApiTerminal.Accounts.cs) | `SaveAccountAsync`、`DiscoverModelsAsync`、`RefreshModelsAsync`、`RefreshQuotaAsync` | 校验、持久化、模型发现、额度 |
 | [请求与任务](../../src/Plugins.ForwardAPI/ForwardApiTerminal.Requests.cs) | `InvokeAsync`、`FailureDecision`、`ExecuteCheckInAsync` | 转发、错误动作、原始流、签到 |
 | [内嵌页面](../../src/Plugins.ForwardAPI/ForwardApiTerminal.Page.cs) | `CreateMainPage` | 管理员 iframe 页面和请求桥 |
-| [项目文件](../../src/Plugins.ForwardAPI/Plugins.ForwardAPI.csproj) | `ProjectReference` | 只引用 Contracts |
+| [项目文件](../../src/Plugins.ForwardAPI/Plugins.ForwardAPI.csproj) | `PackageReference` | 只引用 Contracts 包 |
 
 先沿一个请求读完：页面 `models/discover` → `FetchModelsAsync` → 保存允许模型 → `GetModelsAsync` → 宿主筛选 → `InvokeAsync` → raw 响应 → 宿主写出/释放。
 
 ## 3. 构建与依赖
 
-从本仓库根目录，PowerShell 7：
+仓库根目录的 [NuGet.Config](../../NuGet.Config) 只配置公开的 nuget.org 源。`Router.Contracts` 发布到 nuget.org 后，开发者无需 GitHub PAT、包源用户名、环境变量或 `.env`，PowerShell 7 中直接还原：
+
+```powershell
+dotnet restore ./Plugins.slnx
+```
+
+Linux Bash 同样运行 `dotnet restore ./Plugins.slnx`。若还原提示找不到 `Router.Contracts` 2.0.0，请先确认该版本已发布到 nuget.org 并完成索引；目前 GitHub Packages 上的同名包不会自动同步到 nuget.org。
+
+### 在 VS Code 中拉取包
+
+1. 安装 .NET 10 SDK 和 VS Code 的 **C# Dev Kit**，打开本仓库根目录 `Rouer-Plugins-Csharp`，不要只打开 `src/Plugins.ForwardAPI`。
+2. 在 VS Code 集成终端运行 `dotnet restore ./Plugins.slnx`。无需设置任何包源凭据，也无需重启 VS Code 来传递环境变量。
+3. 还原成功后，C# Dev Kit 的解决方案资源管理器会显示项目的 `Router.Contracts` 包引用；打开 C# 文件即可获得类型提示。若显示 NU1101，请确认包已发布到 nuget.org；若显示 NU1301，请检查网络连接和 nuget.org 可访问性。
+
+从本仓库根目录继续构建，PowerShell 7：
 
 ```powershell
 dotnet build Plugins.slnx --disable-build-servers -m:1 -p:ConcurrentBuild=false -p:UseSharedCompilation=false
 pwsh -File ./build.ps1 -OutputDirectory ./artifacts/forwardapi-release
+# 打包 src 中所有 Plugins.*.csproj 项目（每个插件独立目录）：
+pwsh -File ./buildall.ps1 -OutputDirectory ./artifacts/all-plugins
 ```
 
-输出为 `artifacts/forwardapi-release/forwardapi`，包括主 DLL、`.deps.json`、PDB/XML 和所需私有依赖。脚本排除 `Router.Contracts.*`，避免 loader 误判多个主程序集。目标目录非空时拒绝合并，下一次使用新发行目录。
+Linux Bash 对应命令：
 
-插件和单元测试共用 `src/Router.Contracts` 快照，均可独立运行，不引用宿主实现。测试中通过 Contracts 接口 Mock 所需能力，不要复制或引用 `Router.Infrastructure` 来解决缺失 API；NuGet 迁移另行处理。
+```bash
+bash ./build.sh --output-directory ./artifacts/forwardapi-release
+bash ./buildall.sh --output-directory ./artifacts/all-plugins
+bash ./test.sh
+```
+
+单插件输出为 `artifacts/forwardapi-release/forwardapi`；批量输出在 `artifacts/all-plugins/<pluginKey>`。每个目录包括主 DLL、`.deps.json`、PDB/XML 和所需私有依赖。脚本排除 `Router.Contracts.*`，避免 loader 误判多个主程序集。目标目录非空时拒绝合并，下一次使用新发行目录。
+
+插件和单元测试共用 `Router.Contracts` 包，均可独立运行，不引用宿主实现。测试中通过 Contracts 接口 Mock 所需能力，不要复制或引用 `Router.Infrastructure` 来解决缺失 API。
+
+安装到宿主前，确认宿主已用 Contracts `2.0.0.0` 重新构建并部署；插件引用的包程序集版本为 `2.0.0.0`，旧宿主的 `1.0.0.0` 无法满足该程序集引用。
 
 ## 4. 终端如何注册
 
@@ -188,4 +214,4 @@ pwsh -File ./test.ps1
 
 测试只验证插件自身，不包含宿主 DLL 加载器、任务发现或通用运行时测试，也不需要宿主源码。当前用例检查每日签到任务声明；后续按插件改动补允许表、凭证保持、模型失败、原始字段、错误动作、插件流取消、未知签到响应、额度单位和并发更新用例，外部能力通过 Contracts 接口 Mock。
 
-`git status` 只应包含 ForwardAPI、Contracts、文档和对应测试。不要用 `git add -f` 带回 `.local-only` 的其他提供方。许可证、NuGet token、tag 工作流及推送均需另行确认；本教程不自动发布。
+`git status` 只应包含 ForwardAPI、包引用、NuGet.Config、文档和对应测试。不要用 `git add -f` 带回 `.local-only` 的其他提供方。宿主仓库使用 NuGet Trusted Publishing 获取临时发布凭据；本教程不自动发布。

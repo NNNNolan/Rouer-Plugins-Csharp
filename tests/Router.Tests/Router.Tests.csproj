@@ -5,7 +5,6 @@
     <AssemblyName>Router.Tests</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="$(RouterContractsProject)" />
     <ProjectReference Include="..\..\src\Plugins.ForwardAPI\Plugins.ForwardAPI.csproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
     <PackageReference Include="MSTest.TestAdapter" Version="4.4.1" />

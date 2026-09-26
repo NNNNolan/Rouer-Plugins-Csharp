@@ -120,4 +120,4 @@ DLL 反射只在 loader 发生，端点/任务预绑定 delegate；端点认证�
 ```
 
 原生 `PluginInvocationScope` 统一建立响应前/响应体阶段的截止时间和所有权转移；JS 使用同一份预算。插件的单次/总超时只能进一步缩短。读取空闲超时不会自动重放流。
-JS 账号 CAS、共享状态、后台 job 和原始协议能力使用相同宿主实现。JS 案例为 `Rouer-Plugins-js/plugins/js-forwardapi`，业务回归只使用 Node 模拟；真实上游仍需独立验收。C# 当前源码引用等待后续 NuGet tag 发布方案，不在本轮修改。
+JS 账号 CAS、共享状态、后台 job 和原始协议能力使用相同宿主实现。JS 案例为 `Rouer-Plugins-js/plugins/js-forwardapi`，业务回归只使用 Node 模拟；真实上游仍需独立验收。C# 项目引用 `Router.Contracts` 2.0.0，首次还原步骤见[开发教程](DEVELOPMENT.md)。

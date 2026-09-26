@@ -28,7 +28,7 @@
 1. 读本目录总览、对应语言教程，理解开发工具、后端插件、前端 iframe 是三个环境。
 2. 读当前契约：
    - JS：带中文注释的 `index.d.ts`（参见 `Rouer-Plugins-js/sdk/js/index.d.ts`）、API 手册（参见 `Rouer-Plugins-js/sdk/js/API.md`）、能力对照（参见 `Rouer-Plugins-js/sdk/js/CAPABILITIES.md`）。
-   - C#：[PipelineContracts](../src/Router.Contracts/Pipeline/PipelineContracts.cs)、[PluginContracts](../src/Router.Contracts/Plugins/PluginContracts.cs)、[PluginServices](../src/Router.Contracts/Host/PluginServices.cs)、[响应模型](../src/Router.Contracts/Domain/Models.cs)。
+   - C#：以 `Router.Contracts` 2.0.0 包编译；契约源码见 `Router2API/src/Router.Contracts`，重点阅读 PipelineContracts、PluginContracts、PluginServices 和响应模型。
 3. 读 [宿主运行流程](HOST-LIFECYCLE.md)，沿相关源码链接追到实际实现，而不只看接口名称。
 4. 若迁移提供方，读现有插件**全部相关 partial 文件、调用者和测试**：
    - [ForwardAPI](../src/Plugins.ForwardAPI/)：动态站点、允许表、原始 JSON/响应字节。

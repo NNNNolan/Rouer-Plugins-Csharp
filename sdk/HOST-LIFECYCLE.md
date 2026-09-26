@@ -287,7 +287,7 @@ writer 的 finally 和 HTTP OnCompleted 提供回收兜底。未被枚举的流�
 
 ## 9. 默认预算速查
 
-配置项见 [PluginExecutionOptions](../src/Router.Contracts/Host/PluginServices.cs)；运行值可由宿主进一步限制。
+配置项见 `Router2API/src/Router.Contracts/Host/PluginServices.cs` 中的 `PluginExecutionOptions`；运行值可由宿主进一步限制。
 
 | 项目 | 当前默认/上限 |
 | --- | --- |

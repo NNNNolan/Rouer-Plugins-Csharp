@@ -4,6 +4,6 @@
     <AssemblyName>Plugins.ForwardAPI</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="$(RouterContractsProject)" />
+    <PackageReference Include="Router.Contracts" Version="[2.0.0]" />
   </ItemGroup>
 </Project>

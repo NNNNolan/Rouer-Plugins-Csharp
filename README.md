@@ -8,11 +8,11 @@ Router2API 的 C# 提供方插件仓库，目标框架 .NET 10、公共契约 2.
 | --- | --- |
 | `forwardapi` | [ForwardAPI](src/Plugins.ForwardAPI/README.md)：兼容站点账号、模型/端点允许表、原始协议转发 |
 
-本仓库提供 **Plugins.ForwardAPI**，开发教程也以它为主例。使用 `Plugins.slnx` 编译，或通过 `build.ps1` 生成发行包。
+本仓库公开 **Plugins.ForwardAPI**，开发教程也以它为主例。使用 `Plugins.slnx` 编译，或通过 `build.ps1` 生成单插件发行包；`buildall.ps1` 会扫描本地所有插件项目并分别打包，包括存在于本机但被 Git 忽略的项目。
 
 ## 独立构建和打包
 
-需要 .NET 10 SDK 和 PowerShell 7：
+需要 .NET 10 SDK、PowerShell 7 或 Linux Bash。[NuGet.Config](NuGet.Config) 只配置公开的 nuget.org 包源；`Router.Contracts` 发布到 nuget.org 后，无需包源账号、PAT 或环境变量。详细步骤见 [C# 教程](sdk/csharp/DEVELOPMENT.md)。
 
 ```powershell
 # 仅编译：不需要检出宿主仓库。
@@ -20,6 +20,17 @@ dotnet build Plugins.slnx --disable-build-servers -m:1 -p:ConcurrentBuild=false 
 
 # 生成 ForwardAPI 发行包，不复制到宿主、不执行任务。
 pwsh -File ./build.ps1
+
+# 扫描 src 下的 Plugins.*.csproj，分别打包所有插件。
+pwsh -File ./buildall.ps1 -OutputDirectory ./artifacts/all-plugins
+```
+
+Linux Bash 对应命令：
+
+```bash
+dotnet build Plugins.slnx --disable-build-servers -m:1 -p:ConcurrentBuild=false -p:UseSharedCompilation=false
+bash ./build.sh
+bash ./buildall.sh --output-directory ./artifacts/all-plugins
 ```
 
 输出：
@@ -31,16 +42,17 @@ artifacts/plugins/
 
 每个目录还包括相应 `.deps.json` 和所需私有依赖。打包器排除 `Router.Contracts.*`，避免把 SDK 依赖描述当作第二个主 DLL。目标目录非空会拒绝打包；下一版使用 `pwsh -File ./build.ps1 -OutputDirectory ./artifacts/release-1.0.1`，不把新旧包混在一起。
 
+新增插件按 `src/Plugins.<名称>/Plugins.<名称>.csproj` 命名即可被 `buildall.ps1` 发现；发行目录名为 `<名称>` 的小写形式，并应与插件声明的 `PluginKey` 一致。脚本不依赖 `Plugins.slnx` 的项目清单。
+
 复制**单个完整发行目录**到宿主运行目录的 `plugins` 后，再从管理页重载。不要直接复制混合的解决方案输出目录；不手工清理宿主正在使用的 `.staging`。
 
-## Contracts 为什么也在这里
+## Contracts 依赖
 
-`src/Router.Contracts` 是公共 SDK **源码快照**，不是宿主实现，保证单独 clone 本仓库就能编译，不依赖一个尚未发布的 NuGet 包。
+插件引用 nuget.org 上的 `Router.Contracts` 2.0.0；本仓库不再保存 Contracts 源码快照。GitHub Packages 上已有的同名包不会自动同步，需先完成 nuget.org 发布。
 
-- 契约事实来源是 `Router2API/src/Router.Contracts`，修改接口应先在宿主完成，再同步快照和兼容测试。
+- 契约事实来源是 `Router2API/src/Router.Contracts`；插件升级包版本后需回归兼容测试。
 - 运行时 DLL loader 始终使用宿主自己的 Contracts，不能用插件内自带版本替换宿主类型身份。
-- 插件构建和单元测试均使用本仓库快照，不引用或复制 `Router.Host`、`Router.Infrastructure` 等宿主实现。
-- 后续计划由宿主 tag 自动发布 `Router.Contracts` 到 NuGet，再迁移到包引用；本轮保留现状，不创建发布工作流或引用不存在的包。
+- 插件构建和单元测试均通过 NuGet 包获取契约，不引用或复制 `Router.Host`、`Router.Infrastructure` 等宿主实现。
 
 ## 测试
 
@@ -51,6 +63,8 @@ pwsh -File ./test.ps1
 # 或直接运行测试项目：
 dotnet test ./tests/Router.Tests/Router.Tests.csproj --disable-build-servers -m:1 -p:ConcurrentBuild=false -p:UseSharedCompilation=false
 ```
+
+Linux Bash 使用 `bash ./test.sh`。
 
 这里的“仓库根目录”指 `Rouer-Plugins-Csharp`，不是包含三个仓库的工作区父目录；从父目录运行时使用 `pwsh -File ./Rouer-Plugins-Csharp/test.ps1`。
 IDE 和命令行均可直接运行测试项目，无需配置宿主路径；只编译插件使用 `Plugins.slnx`。
@@ -65,7 +79,7 @@ IDE 和命令行均可直接运行测试项目，无需配置宿主路径；只�
 - [宿主生命周期](sdk/HOST-LIFECYCLE.md)
 - [AI 开发工作单](sdk/AI-DEVELOPMENT.md)
 
-文档中跨仓库引用按 `仓库名/路径` 标识。远程地址尚未指定，不虚构仓库 URL；独立构建和单元测试不需要这些外部文件，实际安装联调才需要宿主。
+文档中跨仓库源码引用按 `仓库名/路径` 标识；独立构建和单元测试不需要宿主源码，实际安装联调才需要宿主。
 
 ## 公开与许可
 
