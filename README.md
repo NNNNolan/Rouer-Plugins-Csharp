@@ -1,6 +1,6 @@
 # Rouer-Plugins-Csharp
 
-Router2API 的 C# 提供方插件仓库，目标框架 .NET 10、公共契约 2.0。插件通过 `IPluginHost.Services` 使用账号、代理池、状态和任务能力，不包含宿主/数据库/前端管理系统的实现代码。
+[Router2API 宿主](https://github.com/NNNNolan/Router2API)的 C# 提供方插件仓库，目标框架 .NET 10、公共契约 2.0。插件通过 `IPluginHost.Services` 使用账号、代理池、状态和任务能力，不包含宿主/数据库/前端管理系统的实现代码。JavaScript 插件见 [Rouer-Plugins-js](https://github.com/NNNNolan/Rouer-Plugins-js)。
 
 ## 插件
 
@@ -48,11 +48,11 @@ artifacts/plugins/
 
 ## GitHub Release 发行索引
 
-推送 `v1.2.3` 形式的 tag 后，GitHub Actions 会在干净检出中调用 `buildall.ps1`，为每个公开插件生成独立的 `<pluginKey>.zip`，并将 `release-index.json` 一同上传到该 tag 的 GitHub Release。每个插件项目的 `.csproj` 必须填写 `Description`；它会进入索引，并在 Release 正文中与插件版本、下载文件一同展示。正文末尾附仓库变更记录。ZIP 内保留 `<pluginKey>/` 顶层目录，解压到宿主 `plugins/` 后才是正确的安装结构。工作流只使用仓库自带的 `GITHUB_TOKEN`，需要允许 Actions 创建 Release 的 `contents: write` 权限。
+推送 `v1.2.3` 形式的 tag 后，GitHub Actions 会在干净检出中调用 `buildall.ps1`，为每个公开插件生成独立的 `<pluginKey>.zip`，并将 `release-index.json` 一同上传到[本仓库的 GitHub Releases](https://github.com/NNNNolan/Rouer-Plugins-Csharp/releases)。每个插件项目的 `.csproj` 必须填写 `Description`；它会进入索引，并在 Release 正文中与插件版本、下载文件一同展示。正文末尾附仓库变更记录。ZIP 内保留 `<pluginKey>/` 顶层目录，解压到宿主 `plugins/` 后才是正确的安装结构。工作流只使用仓库自带的 `GITHUB_TOKEN`，需要允许 Actions 创建 Release 的 `contents: write` 权限。
 
 Release 标题为 `C# 插件 <tag>`。如需写本次发布的专属说明，在打 tag 前提交 `release-notes/<tag>.md`，例如 `release-notes/v1.2.3.md`；工作流会把它放在插件介绍与自动生成的仓库变更之间。没有该文件也能正常发布。插件的长期描述仍在各自项目的 `Description` 中维护。
 
-索引字段和宿主订阅建议见 `Router2API/sdk/PLUGIN-RELEASES.md`。`sha256` 校验 ZIP 下载，`contentSha256` 按包内文件内容判断该插件是否真的有更新。索引中的 C# `version` 读取入口 DLL 的程序集版本；Release 的 `tag` 是本仓库整批产物的发布标识，二者可以不同。新增公开插件时应同时确认其源文件确实被 Git 跟踪；本机被 Git 忽略的项目不会出现在 Actions 的干净检出中。
+索引字段和宿主订阅建议见[宿主的插件发行索引规范](https://github.com/NNNNolan/Router2API/blob/main/sdk/PLUGIN-RELEASES.md)。`sha256` 校验 ZIP 下载，`contentSha256` 按包内文件内容判断该插件是否真的有更新。索引中的 C# `version` 读取入口 DLL 的程序集版本；Release 的 `tag` 是本仓库整批产物的发布标识，二者可以不同。新增公开插件时应同时确认其源文件确实被 Git 跟踪；本机被 Git 忽略的项目不会出现在 Actions 的干净检出中。
 
 本地只生成待上传产物可运行 `pwsh -File ./buildall.ps1 -OutputDirectory ./artifacts/plugins`，随后运行 `pwsh -File ./package-release.ps1 -Tag v1.2.3`。后一个脚本要求输出目录为空，避免把前一次的资产混入新 Release。
 
@@ -62,7 +62,7 @@ Release 标题为 `C# 插件 <tag>`。如需写本次发布的专属说明，在
 
 插件引用 nuget.org 上的 `Router.Contracts` 2.0.0；本仓库不再保存 Contracts 源码快照。GitHub Packages 上已有的同名包不会自动同步，需先完成 nuget.org 发布。
 
-- 契约事实来源是 `Router2API/src/Router.Contracts`；插件升级包版本后需回归兼容测试。
+- 契约事实来源是[宿主仓库的 Router.Contracts](https://github.com/NNNNolan/Router2API/tree/main/src/Router.Contracts)；插件升级包版本后需回归兼容测试。
 - 运行时 DLL loader 始终使用宿主自己的 Contracts，不能用插件内自带版本替换宿主类型身份。
 - 插件构建和单元测试均通过 NuGet 包获取契约，不引用或复制 `Router.Host`、`Router.Infrastructure` 等宿主实现。
 
