@@ -42,7 +42,19 @@ artifacts/plugins/
 
 每个目录还包括相应 `.deps.json` 和所需私有依赖。打包器排除 `Router.Contracts.*`，避免把 SDK 依赖描述当作第二个主 DLL。目标目录非空会拒绝打包；下一版使用 `pwsh -File ./build.ps1 -OutputDirectory ./artifacts/release-1.0.1`，不把新旧包混在一起。
 
+项目填写 `.csproj` 的 `Description` 后，`build.ps1` 会在发行包内生成 `plugin.json`，手动复制到宿主时也能显示插件描述。旧包没有此文件时，宿主会尝试读取 DLL 的程序集描述或入口类型的 XML 文档摘要。
+
 新增插件按 `src/Plugins.<名称>/Plugins.<名称>.csproj` 命名即可被 `buildall.ps1` 发现；发行目录名为 `<名称>` 的小写形式，并应与插件声明的 `PluginKey` 一致。脚本不依赖 `Plugins.slnx` 的项目清单。
+
+## GitHub Release 发行索引
+
+推送 `v1.2.3` 形式的 tag 后，GitHub Actions 会在干净检出中调用 `buildall.ps1`，为每个公开插件生成独立的 `<pluginKey>.zip`，并将 `release-index.json` 一同上传到该 tag 的 GitHub Release。每个插件项目的 `.csproj` 必须填写 `Description`；它会进入索引，并在 Release 正文中与插件版本、下载文件一同展示。正文末尾附仓库变更记录。ZIP 内保留 `<pluginKey>/` 顶层目录，解压到宿主 `plugins/` 后才是正确的安装结构。工作流只使用仓库自带的 `GITHUB_TOKEN`，需要允许 Actions 创建 Release 的 `contents: write` 权限。
+
+Release 标题为 `C# 插件 <tag>`。如需写本次发布的专属说明，在打 tag 前提交 `release-notes/<tag>.md`，例如 `release-notes/v1.2.3.md`；工作流会把它放在插件介绍与自动生成的仓库变更之间。没有该文件也能正常发布。插件的长期描述仍在各自项目的 `Description` 中维护。
+
+索引字段和宿主订阅建议见 `Router2API/sdk/PLUGIN-RELEASES.md`。`sha256` 校验 ZIP 下载，`contentSha256` 按包内文件内容判断该插件是否真的有更新。索引中的 C# `version` 读取入口 DLL 的程序集版本；Release 的 `tag` 是本仓库整批产物的发布标识，二者可以不同。新增公开插件时应同时确认其源文件确实被 Git 跟踪；本机被 Git 忽略的项目不会出现在 Actions 的干净检出中。
+
+本地只生成待上传产物可运行 `pwsh -File ./buildall.ps1 -OutputDirectory ./artifacts/plugins`，随后运行 `pwsh -File ./package-release.ps1 -Tag v1.2.3`。后一个脚本要求输出目录为空，避免把前一次的资产混入新 Release。
 
 复制**单个完整发行目录**到宿主运行目录的 `plugins` 后，再从管理页重载。不要直接复制混合的解决方案输出目录；不手工清理宿主正在使用的 `.staging`。
 

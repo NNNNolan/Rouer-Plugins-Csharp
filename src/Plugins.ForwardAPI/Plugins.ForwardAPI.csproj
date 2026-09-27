@@ -2,8 +2,9 @@
   <PropertyGroup>
     <RootNamespace>Plugins.ForwardAPI</RootNamespace>
     <AssemblyName>Plugins.ForwardAPI</AssemblyName>
+    <Description>将 NewAPI、Sub2API 和兼容 OpenAI API 的站点接入 Router2API，支持多账号、模型与端点限制及请求转发。</Description>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Router.Contracts" Version="[2.0.0]" />
+    <PackageReference Include="Router.Contracts" Version="2.0.0" />
   </ItemGroup>
 </Project>

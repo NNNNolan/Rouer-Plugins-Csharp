@@ -43,4 +43,17 @@ foreach ($file in Get-ChildItem -LiteralPath $source -File -Recurse) {
 }
 $entryDll = Join-Path $output "$projectName.dll"
 if (-not (Test-Path -LiteralPath $entryDll)) { throw "未产生入口 DLL：$entryDll" }
+$projectXml = [xml](Get-Content -LiteralPath $projectFile -Raw)
+$descriptionNode = $projectXml.SelectSingleNode('/Project/PropertyGroup/Description')
+$description = if ($null -eq $descriptionNode) { '' } else { [string]$descriptionNode.InnerText }
+if (-not [string]::IsNullOrWhiteSpace($description)) {
+    [ordered]@{
+        schemaVersion = 1
+        id = $PluginKey
+        name = $projectName.Substring('Plugins.'.Length)
+        description = $description.Trim()
+        runtime = 'dotnet'
+        version = [Reflection.AssemblyName]::GetAssemblyName($entryDll).Version.ToString()
+    } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'plugin.json') -Encoding utf8NoBOM
+}
 Write-Output "构建完成：$output。请按 README 安装到宿主 plugins 目录。"

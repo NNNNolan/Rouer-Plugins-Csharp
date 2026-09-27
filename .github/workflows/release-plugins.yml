@@ -1,0 +1,33 @@
+name: Release plugins
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build each plugin
+        run: pwsh -File ./buildall.ps1 -OutputDirectory ./artifacts/plugins
+      - name: Create archives and index
+        run: pwsh -File ./package-release.ps1 -Tag "$RELEASE_TAG"
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f "release-notes/$RELEASE_TAG.md" ]; then
+            printf '\n## 本次发布说明\n\n' >> artifacts/release/release-notes.md
+            cat "release-notes/$RELEASE_TAG.md" >> artifacts/release/release-notes.md
+          fi
+          gh release create "$RELEASE_TAG" artifacts/release/*.zip artifacts/release/release-index.json --verify-tag --title "C# 插件 $RELEASE_TAG" --generate-notes --notes "$(cat artifacts/release/release-notes.md)" --draft
+          gh release edit "$RELEASE_TAG" --draft=false
