@@ -38,7 +38,7 @@
 | 字段 | 作用 |
 |---|---|
 | `apiKeyHeader`、`apiKeyPrefix` | 指定模型发现和请求转发使用的 API Key 请求头及前缀。默认头为 `Authorization`，默认前缀为 `Bearer `。Anthropic Messages 默认使用 `x-api-key`，除非显式覆盖。 |
-| `ReplaceHeaders` | 当前上游账号的转发请求头覆盖对象。头名不区分大小写，已有头替换、缺失头新增；在账号认证头和协议默认头之后应用。仅影响四种模型转发端点（含流式），不影响模型发现、额度、登录或签到。 |
+| `ReplaceHeaders` | 当前上游账号的请求头覆盖对象。头名不区分大小写，已有头替换、缺失头新增；在账号认证头和协议默认头之后应用。用于模型获取/刷新（`GET /v1/models`）和四种模型转发端点（含流式），不影响额度、登录或签到。获取模型时使用本次表单参数（未提供的字段沿用账号配置），刷新时使用账号已保存参数。 |
 | `quotaApiKeyHeader`、`quotaApiKeyPrefix` | 覆盖额度查询请求使用的认证头。未指定时额度查询默认使用 `Authorization: Bearer ...`。 |
 | `checkInPath` | 指定签到相对路径。必须是站点内路径，不能是绝对 URL、协议相对 URL 或带 `..` 的路径。 |
 | `checkInMethod`、`checkInBody`、`checkInHeaders` | 配置签到 HTTP 方法、JSON 请求体和请求头；方法默认 `POST`。请求体字符串可使用 `{{access_token}}`、`{{token}}`、`{{user_id}}` 和 `{{username}}` 占位符。 |

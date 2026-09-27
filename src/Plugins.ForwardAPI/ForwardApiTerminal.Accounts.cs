@@ -396,9 +396,12 @@ public sealed partial class ForwardApiTerminal
         ForwardApiSettings settings,
         CancellationToken cancellationToken)
     {
+        if (!TryReadReplaceHeaders(ReadExtraParams(settings), out var replaceHeaders, out var error))
+            return (null, 400, error);
         using var client = _host.Http.CreateDirectClient(new PluginHttpClientOptions { AllowAutoRedirect = true });
         using var request = new HttpRequestMessage(HttpMethod.Get, BuildUri(settings.BaseUrl, "/v1/models"));
         ApplyApiKeyHeader(request, settings);
+        ApplyReplaceHeaders(request, replaceHeaders);
         using var response = await client.SendAsync(
             request,
             HttpCompletionOption.ResponseHeadersRead,

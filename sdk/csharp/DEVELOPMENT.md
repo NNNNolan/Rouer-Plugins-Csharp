@@ -142,7 +142,7 @@ builder.AccountPolicy(policy => policy
 
 支持 Chat Completions、Completions、Responses、Messages 四种入口。`BuildUri` 保留部署子路径、消除重复 `/v1`，`/api/*` 从末尾 `/v1` 的父目录开始。
 
-Messages 默认 x-api-key 和 anthropic-version，其他默认 Bearer；高级参数可配置认证头/前缀，不得覆盖危险连接头。转发前最后应用当前账号的 `ReplaceHeaders`，按头名不区分大小写替换或新增；示例和校验规则见[插件说明](../../src/Plugins.ForwardAPI/README.md#高级参数)。
+Messages 默认 x-api-key 和 anthropic-version，其他默认 Bearer；高级参数可配置认证头/前缀，不得覆盖危险连接头。模型获取/刷新（`GET /v1/models`）和转发都在发送前最后应用当前账号的 `ReplaceHeaders`，按头名不区分大小写替换或新增；示例和校验规则见[插件说明](../../src/Plugins.ForwardAPI/README.md#高级参数)。额度查询、登录和签到不使用这组覆盖项。
 
 不能把原请求改成只有文本的 messages：工具、图片、文件、推理和未知字段应保留。raw 不承诺自动清洗上游错误正文中的秘密；日志必须另外脱敏。
 

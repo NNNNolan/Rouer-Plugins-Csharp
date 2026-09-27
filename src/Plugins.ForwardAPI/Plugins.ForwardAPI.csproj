@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <RootNamespace>Plugins.ForwardAPI</RootNamespace>
+    <Version>2.0.1</Version>
     <AssemblyName>Plugins.ForwardAPI</AssemblyName>
     <Description>将 NewAPI、Sub2API 和兼容 OpenAI API 的站点接入 Router2API，支持多账号、模型与端点限制及请求转发。</Description>
   </PropertyGroup>

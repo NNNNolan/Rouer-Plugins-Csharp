@@ -1095,6 +1095,14 @@ public sealed partial class ForwardApiTerminal
             && !source.RequestHeaders.ContainsKey("anthropic-version"))
             request.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
 
+        ApplyReplaceHeaders(request, replaceHeaders);
+    }
+
+    /// <summary>模型获取和转发共用已校验的头覆盖规则：同名替换，缺失新增。</summary>
+    private static void ApplyReplaceHeaders(
+        HttpRequestMessage request,
+        IReadOnlyDictionary<string, string> replaceHeaders)
+    {
         foreach (var (name, value) in replaceHeaders)
         {
             if (request.Headers.NonValidated.Contains(name))
