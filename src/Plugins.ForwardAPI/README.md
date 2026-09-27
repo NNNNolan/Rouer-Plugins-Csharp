@@ -38,10 +38,23 @@
 | 字段 | 作用 |
 |---|---|
 | `apiKeyHeader`、`apiKeyPrefix` | 指定模型发现和请求转发使用的 API Key 请求头及前缀。默认头为 `Authorization`，默认前缀为 `Bearer `。Anthropic Messages 默认使用 `x-api-key`，除非显式覆盖。 |
+| `ReplaceHeaders` | 当前上游账号的转发请求头覆盖对象。头名不区分大小写，已有头替换、缺失头新增；在账号认证头和协议默认头之后应用。仅影响四种模型转发端点（含流式），不影响模型发现、额度、登录或签到。 |
 | `quotaApiKeyHeader`、`quotaApiKeyPrefix` | 覆盖额度查询请求使用的认证头。未指定时额度查询默认使用 `Authorization: Bearer ...`。 |
 | `checkInPath` | 指定签到相对路径。必须是站点内路径，不能是绝对 URL、协议相对 URL 或带 `..` 的路径。 |
 | `checkInMethod`、`checkInBody`、`checkInHeaders` | 配置签到 HTTP 方法、JSON 请求体和请求头；方法默认 `POST`。请求体字符串可使用 `{{access_token}}`、`{{token}}`、`{{user_id}}` 和 `{{username}}` 占位符。 |
 | `loginPath`、`loginMethod`、`loginBody`、`loginHeaders` | 配置签到前的网页登录。默认方法为 `POST`；默认请求体包含用户名和密码。登录请求体字符串可使用 `{{username}}`、`{{password}}`。登录返回的 Token 或 Cookie 会用于签到请求。 |
+
+例如，保留已有的其他额外参数字段，并加入下面的配置替换 User-Agent：
+
+```json
+{
+  "ReplaceHeaders": {
+    "User-Agent": "claude-cli/2.1.161 (external, cli)"
+  }
+}
+```
+
+`ReplaceHeaders` 未配置或为空对象时保持原行为；配置值必须是字符串，显式配置的认证头也会覆盖默认值。拒绝控制字符及 Host、Connection、Content-Length、Cookie 等危险请求头。修改后按页面要求重新获取模型并保存账号。
 
 NewAPI 未指定 `checkInPath` 时会按顺序尝试 `/api/user/checkin` 和 `/api/user/sign_in`，并且需要用户名和密码登录。Sub2API 或 Custom 未指定签到路径时会跳过签到，不猜测站点接口。
 

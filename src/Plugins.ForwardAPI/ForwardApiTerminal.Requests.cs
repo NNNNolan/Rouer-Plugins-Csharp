@@ -71,12 +71,14 @@ public sealed partial class ForwardApiTerminal
         body.Remove("models");
         body["model"] = context.Request.Model;
         var extra = ReadExtraParams(settings);
+        if (!TryReadReplaceHeaders(extra, out var replaceHeaders, out var headerError))
+            return RequestFailure(context, AdapterResponse.BadRequest(headerError), headerError);
         var uri = BuildUri(settings.BaseUrl, context.Request.Endpoint);
         using var request = new HttpRequestMessage(HttpMethod.Post, uri)
         {
             Content = new StringContent(body.ToJsonString(JsonOptions), Encoding.UTF8, "application/json")
         };
-        ApplyRequestHeaders(request, context.Request, settings, extra);
+        ApplyRequestHeaders(request, context.Request, settings, extra, replaceHeaders);
 
         HttpResponseMessage response;
         try
@@ -898,6 +900,33 @@ public sealed partial class ForwardApiTerminal
                 StringComparer.OrdinalIgnoreCase);
     }
 
+    /// <summary>校验转发头覆盖项，按不区分大小写的名称去重；无配置时保持原有行为。</summary>
+    private static bool TryReadReplaceHeaders(
+        JsonObject extra,
+        out Dictionary<string, string> headers,
+        out string error)
+    {
+        headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        error = string.Empty;
+        if (!extra.TryGetPropertyValue("ReplaceHeaders", out var configured)) return true;
+        if (configured is not JsonObject values)
+        {
+            error = "ReplaceHeaders 必须是 JSON 对象";
+            return false;
+        }
+        foreach (var (name, node) in values)
+        {
+            if (!IsSafeCustomHeader(name) || node is not JsonValue value
+                || !value.TryGetValue<string>(out var text) || text.Any(char.IsControl))
+            {
+                error = "ReplaceHeaders 包含不允许的请求头，或头值不是无控制字符的字符串";
+                return false;
+            }
+            headers[name] = text;
+        }
+        return true;
+    }
+
     /// <summary>生成登录 JSON 请求体；未提供自定义模板时使用账号用户名和密码。</summary>
     private static JsonObject CreateLoginBody(JsonObject extra, ForwardApiSettings settings)
     {
@@ -1027,18 +1056,23 @@ public sealed partial class ForwardApiTerminal
     /// <summary>拒绝会覆盖连接路由、代理、Cookie 或消息长度语义的危险自定义请求头。</summary>
     private static bool IsSafeCustomHeader(string name)
         => !string.IsNullOrWhiteSpace(name)
+            && name.All(character => char.IsAsciiLetterOrDigit(character) || "!#$%&'*+-.^_`|~".Contains(character))
             && !name.Equals("Host", StringComparison.OrdinalIgnoreCase)
+            && !name.Equals("Connection", StringComparison.OrdinalIgnoreCase)
+            && !name.Equals("Transfer-Encoding", StringComparison.OrdinalIgnoreCase)
+            && !name.Equals("Upgrade", StringComparison.OrdinalIgnoreCase)
             && !name.StartsWith("Proxy-", StringComparison.OrdinalIgnoreCase)
             && !name.Equals("Content-Length", StringComparison.OrdinalIgnoreCase)
             && !name.Equals("Cookie", StringComparison.OrdinalIgnoreCase)
             && !name.Equals("Set-Cookie", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>转发允许的客户端请求头，并由账号凭据生成认证头和 Messages 端点必需头。</summary>
+    /// <summary>转发客户端请求头、生成账号认证和协议默认头，最后应用当前账号的显式覆盖项。</summary>
     private static void ApplyRequestHeaders(
         HttpRequestMessage request,
         AdapterRequest source,
         ForwardApiSettings settings,
-        JsonObject extra)
+        JsonObject extra,
+        IReadOnlyDictionary<string, string> replaceHeaders)
     {
         foreach (var header in source.RequestHeaders)
         {
@@ -1060,6 +1094,17 @@ public sealed partial class ForwardApiTerminal
             && !request.Headers.Contains("anthropic-version")
             && !source.RequestHeaders.ContainsKey("anthropic-version"))
             request.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
+
+        foreach (var (name, value) in replaceHeaders)
+        {
+            if (request.Headers.NonValidated.Contains(name))
+                request.Headers.Remove(name);
+            if (!request.Headers.TryAddWithoutValidation(name, value) && request.Content is { } content)
+            {
+                content.Headers.Remove(name);
+                content.Headers.TryAddWithoutValidation(name, value);
+            }
+        }
     }
 
     /// <summary>递归替换 JSON 请求模板中所有字符串节点的占位符。</summary>

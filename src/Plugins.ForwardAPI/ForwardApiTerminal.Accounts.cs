@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Router.Contracts.Domain;
 using Router.Contracts.Host;
 using Router.Contracts.Plugins;
@@ -764,8 +765,7 @@ public sealed partial class ForwardApiTerminal
             using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
             if (document.RootElement.ValueKind != JsonValueKind.Object) return false;
             value = document.RootElement.GetRawText();
-            error = string.Empty;
-            return true;
+            return TryReadReplaceHeaders(JsonNode.Parse(value)!.AsObject(), out _, out error);
         }
         catch (JsonException)
         {

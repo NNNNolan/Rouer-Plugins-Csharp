@@ -68,7 +68,7 @@ Release 标题为 `C# 插件 <tag>`。如需写本次发布的专属说明，在
 
 ## 测试
 
-`tests/Router.Tests` 只测试插件自身行为，当前用例验证 ForwardAPI 每日签到任务的名称和 Cron 声明。宿主能力通过 `Router.Contracts` 接口 Mock，不依赖宿主源码、数据库、Redis、Node 或真实上游。
+`tests/Router.Tests` 只测试插件自身行为，当前用例验证 ForwardAPI 每日签到任务的名称和 Cron 声明，以及 `ReplaceHeaders` 的覆盖、新增、账号隔离和非法配置拒绝。宿主能力通过 `Router.Contracts` 接口 Mock，不依赖宿主源码、数据库、Redis、Node 或真实上游。
 
 ```powershell
 pwsh -File ./test.ps1

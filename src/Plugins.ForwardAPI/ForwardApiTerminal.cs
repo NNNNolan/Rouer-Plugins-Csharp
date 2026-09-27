@@ -93,6 +93,8 @@ public sealed partial class ForwardApiTerminal(IPluginHost host)
             return Task.FromResult(new CredentialValidationResult(false, "API key is empty"));
         if (!TryValidateBaseUrl(settings.BaseUrl, out var error))
             return Task.FromResult(new CredentialValidationResult(false, error));
+        if (!TryReadReplaceHeaders(ReadExtraParams(settings), out _, out var headerError))
+            return Task.FromResult(new CredentialValidationResult(false, headerError));
         return Task.FromResult(new CredentialValidationResult(true));
     }
 

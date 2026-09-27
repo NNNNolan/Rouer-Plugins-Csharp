@@ -142,7 +142,7 @@ builder.AccountPolicy(policy => policy
 
 支持 Chat Completions、Completions、Responses、Messages 四种入口。`BuildUri` 保留部署子路径、消除重复 `/v1`，`/api/*` 从末尾 `/v1` 的父目录开始。
 
-Messages 默认 x-api-key 和 anthropic-version，其他默认 Bearer；高级参数可配置认证头/前缀，不得覆盖危险连接头。
+Messages 默认 x-api-key 和 anthropic-version，其他默认 Bearer；高级参数可配置认证头/前缀，不得覆盖危险连接头。转发前最后应用当前账号的 `ReplaceHeaders`，按头名不区分大小写替换或新增；示例和校验规则见[插件说明](../../src/Plugins.ForwardAPI/README.md#高级参数)。
 
 不能把原请求改成只有文本的 messages：工具、图片、文件、推理和未知字段应保留。raw 不承诺自动清洗上游错误正文中的秘密；日志必须另外脱敏。
 
@@ -212,6 +212,6 @@ Copy-Item -LiteralPath $package.Path -Destination $plugins -Recurse
 pwsh -File ./test.ps1
 ```
 
-测试只验证插件自身，不包含宿主 DLL 加载器、任务发现或通用运行时测试，也不需要宿主源码。当前用例检查每日签到任务声明；后续按插件改动补允许表、凭证保持、模型失败、原始字段、错误动作、插件流取消、未知签到响应、额度单位和并发更新用例，外部能力通过 Contracts 接口 Mock。
+测试只验证插件自身，不包含宿主 DLL 加载器、任务发现或通用运行时测试，也不需要宿主源码。当前用例检查每日签到任务声明，以及 `ReplaceHeaders` 在四种端点/流式模式中的覆盖、新增、账号隔离和非法配置拒绝；后续按插件改动补允许表、凭证保持、模型失败、原始字段、错误动作、插件流取消、未知签到响应、额度单位和并发更新用例，外部能力通过 Contracts 接口 Mock。
 
 `git status` 只应包含 ForwardAPI、包引用、NuGet.Config、文档和对应测试。不要用 `git add -f` 带回 `.local-only` 的其他提供方。宿主仓库使用 NuGet Trusted Publishing 获取临时发布凭据；本教程不自动发布。
