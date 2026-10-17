@@ -83,6 +83,8 @@ DotNetPackageLoader / JintPackageLoader
 ```
 
 DLL 反射只在 loader 发生，端点/任务预绑定 delegate；端点认证仍由宿主统一处理。一个包的 `PluginKey` 必须与安装目录一致，不能抢占其他插件的平台。
+
+`[PluginEndpoint]` 方法必须是公开实例方法，只接受一个 `PluginHttpContext`，且返回类型严格为 `Task<PluginResult>`。即使只返回静态 HTML，也应使用 `Task.FromResult(new PluginResult { ... })`，不能直接返回 `PluginResult` 或 `ValueTask<PluginResult>`；否则整个 DLL 包会在激活阶段被拒绝。直接调用方法的单元测试不能代替端点委托绑定及发行包加载验证。
 模型缓存遵守 `[ModelCache]` / JS TTL；失效或更换版本后，旧的异步模型查询不能覆盖新缓存。
 
 `AdapterResponse.Lifetime` 持有客户端、响应、租约和 JS Engine。调用方必须完整消费流/Dispose 枚举器，或者显式 `await response.Lifetime.DisposeAsync()`；HTTP 写出器自动处理。业务统计等到完整写出后完成。
