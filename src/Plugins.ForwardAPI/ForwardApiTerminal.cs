@@ -142,9 +142,15 @@ public sealed partial class ForwardApiTerminal(IPluginHost host)
         var policy = GetAccountModelPolicy(account);
         if (policy is null || !policy.Enabled)
             return false;
-        if (!policy.Endpoints.Contains(NormalizeEndpoint(request.Endpoint), StringComparer.OrdinalIgnoreCase))
+        var endpoint = request.Endpoint.AsSpan().Trim().Trim('/');
+        foreach (var allowed in policy.Endpoints)
+        {
+            if (!endpoint.Equals(allowed.AsSpan().Trim('/'), StringComparison.OrdinalIgnoreCase)) continue;
+            foreach (var model in policy.Models)
+                if (string.Equals(model, request.Model, StringComparison.OrdinalIgnoreCase)) return true;
             return false;
-        return policy.Models.Contains(request.Model, StringComparer.OrdinalIgnoreCase);
+        }
+        return false;
     }
 
     /// <summary>优先从当前不可变快照读取账号策略；快照未收录账号时从凭据即时构造策略。</summary>
@@ -256,7 +262,12 @@ public sealed partial class ForwardApiTerminal(IPluginHost host)
 
     /// <summary>为端点路径添加单个前导斜杠并移除首尾多余斜杠。</summary>
     private static string NormalizeEndpoint(string endpoint)
-        => "/" + endpoint.Trim().Trim('/');
+    {
+        var path = endpoint.AsSpan().Trim().Trim('/');
+        foreach (var supported in SupportedEndpoints)
+            if (path.SequenceEqual(supported.AsSpan(1))) return supported;
+        return string.Concat("/", path);
+    }
 
     /// <summary>从账号凭据委托读取站点设置。</summary>
     private static bool TryReadSettings(Account account, out ForwardApiSettings settings)

@@ -647,7 +647,7 @@ public sealed partial class ForwardApiTerminal
     }
 
     /// <summary>按候选字段名读取额度数字，兼容 JSON 数字和使用不变量格式的数字字符串。</summary>
-    private static decimal? ReadQuotaNumber(JsonElement element, params string[] names)
+    private static decimal? ReadQuotaNumber(JsonElement element, params ReadOnlySpan<string> names)
     {
         if (element.ValueKind != JsonValueKind.Object) return null;
         foreach (var name in names)
@@ -662,22 +662,26 @@ public sealed partial class ForwardApiTerminal
     }
 
     /// <summary>按候选字段名读取 JSON 布尔值或布尔字符串。</summary>
-    private static bool ReadQuotaBoolean(JsonElement element, params string[] names)
-        => element.ValueKind == JsonValueKind.Object
-            && names.Any(name => element.TryGetProperty(name, out var value)
+    private static bool ReadQuotaBoolean(JsonElement element, params ReadOnlySpan<string> names)
+    {
+        if (element.ValueKind != JsonValueKind.Object) return false;
+        foreach (var name in names)
+            if (element.TryGetProperty(name, out var value)
                 && (value.ValueKind == JsonValueKind.True
                     || value.ValueKind == JsonValueKind.String
-                    && bool.TryParse(value.GetString(), out var parsed)
-                    && parsed));
+                    && bool.TryParse(value.GetString(), out var parsed) && parsed)) return true;
+        return false;
+    }
 
     /// <summary>按优先顺序返回第一个非空的字符串字段。</summary>
-    private static string? ReadQuotaString(JsonElement element, params string[] names)
-        => element.ValueKind == JsonValueKind.Object
-            ? names.Select(name => element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-                    ? value.GetString()
-                    : null)
-                .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))
-            : null;
+    private static string? ReadQuotaString(JsonElement element, params ReadOnlySpan<string> names)
+    {
+        if (element.ValueKind != JsonValueKind.Object) return null;
+        foreach (var name in names)
+            if (element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+                && value.GetString() is { } text && !string.IsNullOrWhiteSpace(text)) return text;
+        return null;
+    }
 
     /// <summary>从多个速率限制窗口中选取使用比例最高的一项作为当前有效额度。</summary>
     private static (decimal Total, decimal Used, decimal Remaining)? ReadTightestRateLimit(JsonElement limits)
@@ -733,7 +737,7 @@ public sealed partial class ForwardApiTerminal
         try
         {
             if (body is JsonElement { ValueKind: JsonValueKind.Object } element
-                && JsonSerializer.Deserialize<T>(element.GetRawText(), JsonOptions) is { } value)
+                && element.Deserialize<T>(JsonOptions) is { } value)
             {
                 input = value;
                 return true;

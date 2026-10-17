@@ -58,7 +58,7 @@ public sealed partial class ForwardApiTerminal
         JsonObject body;
         try
         {
-            body = JsonNode.Parse(originalBody.GetRawText()) as JsonObject
+            body = originalBody.Deserialize<JsonObject>()
                 ?? throw new JsonException("request body must be an object");
         }
         catch (JsonException exception)
@@ -946,7 +946,7 @@ public sealed partial class ForwardApiTerminal
     }
 
     /// <summary>按属性路径从 JSON 文本中读取字符串值；解析失败或路径不存在时返回空值。</summary>
-    private static string? ReadJsonString(string? json, params string[] path)
+    private static string? ReadJsonString(string? json, params ReadOnlySpan<string> path)
     {
         if (string.IsNullOrWhiteSpace(json)) return null;
         try
@@ -968,7 +968,7 @@ public sealed partial class ForwardApiTerminal
     }
 
     /// <summary>按属性路径读取字符串或数字文本，供账号 ID 等可能为数字的站点字段使用。</summary>
-    private static string? ReadJsonStringOrNumber(string? json, params string[] path)
+    private static string? ReadJsonStringOrNumber(string? json, params ReadOnlySpan<string> path)
     {
         if (string.IsNullOrWhiteSpace(json)) return null;
         try

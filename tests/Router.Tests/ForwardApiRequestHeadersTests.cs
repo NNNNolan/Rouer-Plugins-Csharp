@@ -14,6 +14,33 @@ public sealed class ForwardApiRequestHeadersTests
 {
     private static readonly string[] ModelIds = ["model-a"];
 
+    [TestMethod]
+    public async Task ForwardingPreservesOriginalJsonValues()
+    {
+        using var original = JsonDocument.Parse("""
+            {"model":"forwardapi/model-a","endpoint":"internal","overrides":{},"models":[],
+             "messages":[{"role":"assistant","tool_calls":[{"function":{"arguments":"{  \"x\":1}"}}]}],
+             "unknown":{"large":9007199254740993,"precise":1.234567890123456789,"text":"你😀"}}
+            """);
+        using var terminal = new ForwardApiTerminal(PluginTestHost.Create("forwardapi"));
+        var context = CreateContext("{}", originalBody: original.RootElement, inspect: request =>
+        {
+            using var forwarded = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+            var root = forwarded.RootElement;
+            Assert.AreEqual("model-a", root.GetProperty("model").GetString());
+            Assert.IsFalse(root.TryGetProperty("endpoint", out _));
+            Assert.IsFalse(root.TryGetProperty("overrides", out _));
+            Assert.IsFalse(root.TryGetProperty("models", out _));
+            Assert.AreEqual(9007199254740993L, root.GetProperty("unknown").GetProperty("large").GetInt64());
+            Assert.AreEqual("1.234567890123456789", root.GetProperty("unknown").GetProperty("precise").GetRawText());
+            Assert.AreEqual("你😀", root.GetProperty("unknown").GetProperty("text").GetString());
+            Assert.AreEqual("{  \"x\":1}", root.GetProperty("messages")[0].GetProperty("tool_calls")[0]
+                .GetProperty("function").GetProperty("arguments").GetString());
+        });
+        Assert.IsTrue((await terminal.InvokeAsync(context)).Response.IsSuccess);
+        Assert.AreEqual("internal", original.RootElement.GetProperty("endpoint").GetString());
+    }
+
     /// <summary>所有转发端点共用最后覆盖逻辑，兼容流式和非流式响应。</summary>
     /// <param name="endpoint">下游模型请求端点。</param>
     /// <param name="stream">是否请求流式响应。</param>
@@ -250,7 +277,8 @@ public sealed class ForwardApiRequestHeadersTests
         string extraParams,
         string endpoint = "/v1/chat/completions",
         bool stream = false,
-        Action<HttpRequestMessage>? inspect = null)
+        Action<HttpRequestMessage>? inspect = null,
+        JsonElement? originalBody = null)
     {
         var client = new Mock<IPluginHttpClient>(MockBehavior.Strict);
         client.Setup(value => value.SendAsync(It.IsAny<HttpRequestMessage>(), false,
@@ -279,7 +307,7 @@ public sealed class ForwardApiRequestHeadersTests
             Request = new AdapterRequest
             {
                 Model = "model-a", Endpoint = endpoint, Stream = stream,
-                OriginalBody = JsonSerializer.SerializeToElement(new { model = "forwardapi/model-a" }),
+                OriginalBody = originalBody ?? JsonSerializer.SerializeToElement(new { model = "forwardapi/model-a" }),
                 RequestHeaders =
                 {
                     ["uSeR-aGeNt"] = "downstream-client", ["X-Trace"] = "trace-123", ["x-upstream-key"] = "downstream-key",
