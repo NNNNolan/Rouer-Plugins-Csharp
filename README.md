@@ -7,8 +7,9 @@
 | 安装目录 / PluginKey | 源码与说明 |
 | --- | --- |
 | `forwardapi` | [ForwardAPI](src/Plugins.ForwardAPI/README.md)：兼容站点账号、模型/端点允许表、原始协议转发 |
+| `modelrotator` | [ModelRotator](src/Plugins.ModelRotator/README.md)：虚拟模型路由、故障轮转、健康探测与用量统计 |
 
-本仓库公开 **Plugins.ForwardAPI**，开发教程也以它为主例。使用 `Plugins.slnx` 编译，或通过 `build.ps1` 生成单插件发行包；`buildall.ps1` 会扫描本地所有插件项目并分别打包，包括存在于本机但被 Git 忽略的项目。
+本仓库公开 **Plugins.ForwardAPI** 与 **Plugins.ModelRotator**，开发教程也以它们为主例。使用 `Plugins.slnx` 编译，或通过 `build.ps1` 生成单插件发行包；`buildall.ps1` 会扫描本地所有插件项目并分别打包，包括存在于本机但被 Git 忽略的项目。
 
 ## 独立构建和打包
 
@@ -18,8 +19,8 @@
 # 仅编译：不需要检出宿主仓库。
 dotnet build Plugins.slnx --disable-build-servers -m:1 -p:ConcurrentBuild=false -p:UseSharedCompilation=false
 
-# 生成 ForwardAPI 发行包，不复制到宿主、不执行任务。
-pwsh -File ./build.ps1
+# 生成 ModelRotator 发行包到 artifacts/plugins/modelrotator（不复制到宿主、不执行任务）。
+pwsh -File ./build.ps1 -Project ./src/Plugins.ModelRotator/Plugins.ModelRotator.csproj -PluginKey modelrotator
 
 # 扫描 src 下的 Plugins.*.csproj，分别打包所有插件。
 pwsh -File ./buildall.ps1 -OutputDirectory ./artifacts/all-plugins
@@ -38,6 +39,7 @@ bash ./buildall.sh --output-directory ./artifacts/all-plugins
 ```text
 artifacts/plugins/
   forwardapi/Plugins.ForwardAPI.dll
+  modelrotator/Plugins.ModelRotator.dll
 ```
 
 每个目录还包括相应 `.deps.json` 和所需私有依赖。打包器排除 `Router.Contracts.*`，避免把 SDK 依赖描述当作第二个主 DLL。目标目录非空会拒绝打包；下一版使用 `pwsh -File ./build.ps1 -OutputDirectory ./artifacts/release-1.0.1`，不把新旧包混在一起。
@@ -68,7 +70,7 @@ Release 标题为 `C# 插件 <tag>`。如需写本次发布的专属说明，在
 
 ## 测试
 
-`tests/Router.Tests` 只测试插件自身行为，当前用例验证 ForwardAPI 每日签到任务声明、`ReplaceHeaders` 的覆盖与校验、原始 JSON 字段和数值精度保留，以及账号快照预热后的模型/端点筛选零分配。零分配断言仅覆盖该同步筛选，不代表完整 HTTP 请求或流转发零分配。宿主能力通过 `Router.Contracts` 接口 Mock，不依赖宿主源码、数据库、Redis、Node 或真实上游。
+`tests/Router.Tests` 只测试插件自身行为，当前用例验证 ForwardAPI 每日签到任务声明、`ReplaceHeaders` 的覆盖与校验、原始 JSON 字段和数值精度保留，以及账号快照预热后的模型/端点筛选零分配。零分配断言仅覆盖该同步筛选，不代表完整 HT; ModelRotator 部分验证配置规范化（JS 版语义的数值收敛、路由去重、旧版 usage 行数组兼容）、旧状态键迁移（改大小写后的虚拟模型/实际模型与 `active/` 旧前缀）和手动激活语义（更新 pin、不动禁用状态、不经 HTTP）。 宿主能力通过 `Router.Contracts` 接口 Mock，不依赖宿主源码、数据库、Redis、Node 或真实上游。 (feat(modelrotator): 新增 ModelRotator 插件 v2.7.9（虚拟模型轮转 + 401/403 分类修复）)
 
 ```powershell
 pwsh -File ./test.ps1
