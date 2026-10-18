@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Plugins.ModelRotator</RootNamespace>
+    <Version>2.7.9</Version>
+    <AssemblyName>Plugins.ModelRotator</AssemblyName>
+    <Description>模型轮转：将虚拟模型映射到有序上游真实模型，失败后自动轮转，支持健康探测恢复、用量统计和内嵌管理页面。</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Router.Contracts" Version="2.0.0" />
+  </ItemGroup>
+</Project>

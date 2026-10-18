@@ -69,8 +69,11 @@ public sealed partial class ForwardApiTerminal
         body.Remove("endpoint");
         body.Remove("overrides");
         body.Remove("models");
-        body["model"] = context.Request.Model;
         var extra = ReadExtraParams(settings);
+        if (!TryReadModelMap(extra, out var modelMap, out var modelMapError))
+            return RequestFailure(context, AdapterResponse.BadRequest(modelMapError), modelMapError);
+        // 同一个宿主模型可能在不同上游叫不同名字，按账号配置的 ModelMap 透传上游模型名。
+        body["model"] = ResolveUpstreamModel(context.Request.Model, modelMap);
         if (!TryReadReplaceHeaders(extra, out var replaceHeaders, out var headerError))
             return RequestFailure(context, AdapterResponse.BadRequest(headerError), headerError);
         var uri = BuildUri(settings.BaseUrl, context.Request.Endpoint);
@@ -850,6 +853,46 @@ public sealed partial class ForwardApiTerminal
     }
 
     /// <summary>读取高级参数 JSON 对象；配置无效时使用空对象和各功能默认值。</summary>
+    private static readonly IReadOnlyDictionary<string, string> EmptyModelMap =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>读取 extraParams.ModelMap：把宿主模型名映射成上游实际使用的模型名。</summary>
+    private static bool TryReadModelMap(
+        JsonObject extra,
+        out IReadOnlyDictionary<string, string> map,
+        out string error)
+    {
+        map = EmptyModelMap;
+        error = string.Empty;
+        if (!extra.TryGetPropertyValue("ModelMap", out var configured) || configured is null) return true;
+        if (configured is not JsonObject source)
+        {
+            error = "ModelMap 必须是 JSON 对象（宿主模型名 → 上游模型名）";
+            return false;
+        }
+
+        var target = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in source)
+        {
+            if (pair.Value is not JsonValue value
+                || !value.TryGetValue<string>(out var mapped)
+                || string.IsNullOrWhiteSpace(mapped))
+            {
+                error = $"ModelMap.{pair.Key} 必须是非空字符串";
+                return false;
+            }
+
+            target[pair.Key.Trim()] = mapped.Trim();
+        }
+
+        map = target;
+        return true;
+    }
+
+    /// <summary>按映射返回上游模型名；未配置映射时原样返回。</summary>
+    private static string ResolveUpstreamModel(string model, IReadOnlyDictionary<string, string> map)
+        => map.TryGetValue(model, out var mapped) ? mapped : model;
+
     private static JsonObject ReadExtraParams(ForwardApiSettings settings)
     {
         try { return JsonNode.Parse(settings.ExtraParams) as JsonObject ?? new JsonObject(); }
