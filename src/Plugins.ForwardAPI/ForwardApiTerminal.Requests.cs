@@ -31,15 +31,13 @@ public sealed partial class ForwardApiTerminal
     private static PluginAttemptDecision FailureDecision(PluginAttemptResult attempt)
     {
         var disable = attempt.IndicatesInvalidCredential;
-        var cooldown = !disable && (attempt.IsTransportFailure || attempt.StatusCode is 429 or >= 500);
         return new PluginAttemptDecision
         {
             FailureKind = attempt.IsTransportFailure ? PluginFailureKind.Transport
                 : disable ? PluginFailureKind.InvalidCredential : PluginFailureKind.Upstream,
             Retry = disable || attempt.IsTransportFailure || attempt.StatusCode is 408 or 425 or 429 or >= 500
                 ? PluginRetryAction.NextAttempt : PluginRetryAction.None,
-            AccountAction = disable ? PluginAccountAction.Disable : cooldown ? PluginAccountAction.Cooldown : PluginAccountAction.None,
-            AccountCooldownUntil = cooldown ? DateTimeOffset.UtcNow.AddMinutes(5) : null,
+            AccountAction = disable ? PluginAccountAction.Disable : PluginAccountAction.None,
             ProxyAction = attempt.IsTransportFailure || attempt.StatusCode == 407 ? PluginProxyAction.Cooldown : PluginProxyAction.None,
             ReasonCode = "forwardapi.upstream"
         };
@@ -50,20 +48,32 @@ public sealed partial class ForwardApiTerminal
         var stopwatch = Stopwatch.StartNew();
         if (!TryReadSettings(context.Account, out var settings))
             return RequestFailure(context, AdapterResponse.BadRequest("ForwardAPI account settings are missing"), "账号配置缺失");
+        if (!TryValidateProxySettings(settings, out var proxyError))
+            return RequestFailure(context, AdapterResponse.BadRequest(proxyError), proxyError);
         if (!IsAccountEligible(context.Account, context.Request))
             return RequestFailure(context, AdapterResponse.BadRequest("account does not support the requested model or endpoint"), "账号未启用此模型或端点");
         if (context.Request.OriginalBody is not { ValueKind: JsonValueKind.Object } originalBody)
             return RequestFailure(context, AdapterResponse.BadRequest("original request body is unavailable"), "请求体不是有效 JSON 对象");
 
+        var upstreamApi = NormalizeUpstreamApi(settings.UpstreamApi);
+        if (upstreamApi is null)
+            return RequestFailure(context, AdapterResponse.BadRequest("无效的上游 API 设置"), "无效的上游 API 设置");
+        var upstreamEndpoint = upstreamApi switch
+        {
+            "responses" => "/v1/responses",
+            "chat" => "/v1/chat/completions",
+            _ => context.Request.Endpoint
+        };
+        var convertProtocol = !upstreamEndpoint.Equals(context.Request.Endpoint, StringComparison.OrdinalIgnoreCase);
         JsonObject body;
         try
         {
-            body = originalBody.Deserialize<JsonObject>()
-                ?? throw new JsonException("request body must be an object");
+            body = convertProtocol ? ConvertProtocolRequest(context.Request, upstreamApi)
+                : originalBody.Deserialize<JsonObject>() ?? throw new JsonException("request body must be an object");
         }
-        catch (JsonException exception)
+        catch (Exception exception) when (exception is JsonException or NotSupportedException or InvalidOperationException or FormatException)
         {
-            return RequestFailure(context, AdapterResponse.BadRequest(exception.Message), "无法读取原始请求体");
+            return RequestFailure(context, AdapterResponse.BadRequest(SanitizeMessage(exception.Message, settings)), "无法转换请求协议");
         }
 
         body.Remove("endpoint");
@@ -76,38 +86,51 @@ public sealed partial class ForwardApiTerminal
         body["model"] = ResolveUpstreamModel(context.Request.Model, modelMap);
         if (!TryReadReplaceHeaders(extra, out var replaceHeaders, out var headerError))
             return RequestFailure(context, AdapterResponse.BadRequest(headerError), headerError);
-        var uri = BuildUri(settings.BaseUrl, context.Request.Endpoint);
+        var uri = BuildUri(settings.BaseUrl, upstreamEndpoint);
         using var request = new HttpRequestMessage(HttpMethod.Post, uri)
         {
             Content = new StringContent(body.ToJsonString(JsonOptions), Encoding.UTF8, "application/json")
         };
-        ApplyRequestHeaders(request, context.Request, settings, extra, replaceHeaders);
+        ApplyRequestHeaders(request, context.Request, settings, extra, replaceHeaders, upstreamEndpoint);
 
         HttpResponseMessage response;
+        ProxyResponseLifetime? proxyLifetime = null;
         try
         {
-            response = await context.HttpClient.SendAsync(
-                request,
-                useProxyPool: false,
-                HttpCompletionOption.ResponseHeadersRead,
-                context.CancellationToken);
+            if (settings.ProxyMode == "custom")
+            {
+                var client = CreateCustomProxyClient(settings, allowAutoRedirect: false);
+                proxyLifetime = new ProxyResponseLifetime(client);
+                response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, context.CancellationToken);
+                proxyLifetime.Response = response;
+            }
+            else
+            {
+                response = await context.HttpClient.SendAsync(
+                    request,
+                    useProxyPool: settings.ProxyMode == "pool",
+                    HttpCompletionOption.ResponseHeadersRead,
+                    context.CancellationToken);
+            }
         }
         catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
         {
+            proxyLifetime?.Dispose();
             throw;
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
+            proxyLifetime?.Dispose();
             var error = SanitizeMessage(exception.Message, settings);
             await TryLogAsync(
                 "request.upstream.failed",
-                $"直连上游失败：{error}",
+                $"上游失败：{error}",
                 "Error",
                 context.TraceId,
                 context.Account.Id,
                 context.Request.Model,
                 durationMs: (int)stopwatch.ElapsedMilliseconds,
-                details: new { endpoint = context.Request.Endpoint, route = "direct" });
+                details: new { endpoint = context.Request.Endpoint, route = settings.ProxyMode });
             return new(
                 AdapterResponse.ServerError(error),
                 new PluginAttemptResult(
@@ -134,7 +157,7 @@ public sealed partial class ForwardApiTerminal
                     context.Request.Model,
                     statusCode: statusCode,
                     durationMs: (int)stopwatch.ElapsedMilliseconds,
-                    details: new { endpoint = context.Request.Endpoint, route = "direct" });
+                    details: new { endpoint = context.Request.Endpoint, route = settings.ProxyMode });
                 var invalidCredential = statusCode == 401
                     || statusCode == 403 && (error.Contains("invalid", StringComparison.OrdinalIgnoreCase)
                         || error.Contains("unauthorized", StringComparison.OrdinalIgnoreCase)
@@ -145,7 +168,10 @@ public sealed partial class ForwardApiTerminal
                         ? PluginAttemptOutcome.CooldownAccount
                         : PluginAttemptOutcome.NoPenalty;
                 return new(
-                    RawResponse(statusCode, rawContent, contentType),
+                    convertProtocol
+                        ? new AdapterResponse { StatusCode = statusCode, Error = error,
+                            ErrorType = invalidCredential ? "authentication_error" : "upstream_error" }
+                        : RawResponse(statusCode, rawContent, contentType),
                     new PluginAttemptResult(
                         outcome,
                         statusCode,
@@ -155,6 +181,48 @@ public sealed partial class ForwardApiTerminal
             finally
             {
                 response.Dispose();
+                proxyLifetime?.Dispose();
+            }
+        }
+
+        if (convertProtocol)
+        {
+            if (contentType.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!context.Request.Stream)
+                {
+                    response.Dispose();
+                    proxyLifetime?.Dispose();
+                    return new(new AdapterResponse { StatusCode = 502, Error = "上游为非流式请求返回了 SSE", ErrorType = "upstream_error" },
+                        new PluginAttemptResult(PluginAttemptOutcome.NoPenalty, 502));
+                }
+                var lifetime = new ProtocolResponseLifetime(response, proxyLifetime);
+                return new(new AdapterResponse
+                {
+                    StatusCode = statusCode,
+                    IsStreaming = true,
+                    ContentType = "text/event-stream",
+                    Stream = ReadConvertedStreamAsync(response, upstreamApi, context.Request.Model, lifetime, settings, context.CancellationToken),
+                    Lifetime = lifetime
+                }, new PluginAttemptResult(PluginAttemptOutcome.Healthy, statusCode));
+            }
+            try
+            {
+                var content = await response.Content.ReadAsByteArrayAsync(context.CancellationToken);
+                using var document = JsonDocument.Parse(content);
+                var completion = ParseProtocolCompletion(document.RootElement, upstreamApi, context.Request.Model);
+                return new(new AdapterResponse { StatusCode = statusCode, Completion = completion },
+                    new PluginAttemptResult(PluginAttemptOutcome.Healthy, statusCode));
+            }
+            catch (Exception exception) when (exception is JsonException or InvalidOperationException or KeyNotFoundException or FormatException)
+            {
+                return new(new AdapterResponse { StatusCode = 502, Error = SanitizeMessage(exception.Message, settings), ErrorType = "upstream_error" },
+                    new PluginAttemptResult(PluginAttemptOutcome.NoPenalty, 502));
+            }
+            finally
+            {
+                response.Dispose();
+                proxyLifetime?.Dispose();
             }
         }
 
@@ -164,13 +232,13 @@ public sealed partial class ForwardApiTerminal
         {
             await TryLogAsync(
                 "request.upstream.connected",
-                "直连上游已建立流式响应",
+                "上游已建立流式响应",
                 traceId: context.TraceId,
                 accountId: context.Account.Id,
                 model: context.Request.Model,
                 statusCode: statusCode,
                 durationMs: (int)stopwatch.ElapsedMilliseconds,
-                details: new { endpoint = context.Request.Endpoint, route = "direct", contentType });
+                details: new { endpoint = context.Request.Endpoint, route = settings.ProxyMode, contentType });
             return new(
                 new AdapterResponse
                 {
@@ -178,7 +246,8 @@ public sealed partial class ForwardApiTerminal
                     IsStreaming = true,
                     IsRawPassthrough = true,
                     ContentType = contentType,
-                    RawStream = ReadRawStreamAsync(response, context.CancellationToken)
+                    RawStream = ReadRawStreamAsync(response, context.CancellationToken, proxyLifetime),
+                    Lifetime = proxyLifetime
                 },
                 new PluginAttemptResult(PluginAttemptOutcome.Healthy, statusCode));
         }
@@ -189,13 +258,13 @@ public sealed partial class ForwardApiTerminal
             var usage = TryReadUsage(content);
             await TryLogAsync(
                 "request.upstream.succeeded",
-                "直连上游请求成功",
+                "上游请求成功",
                 traceId: context.TraceId,
                 accountId: context.Account.Id,
                 model: context.Request.Model,
                 statusCode: statusCode,
                 durationMs: (int)stopwatch.ElapsedMilliseconds,
-                details: new { endpoint = context.Request.Endpoint, route = "direct", contentType });
+                details: new { endpoint = context.Request.Endpoint, route = settings.ProxyMode, contentType });
             return new(
                 new AdapterResponse
                 {
@@ -210,6 +279,7 @@ public sealed partial class ForwardApiTerminal
         finally
         {
             response.Dispose();
+            proxyLifetime?.Dispose();
         }
     }
 
@@ -225,7 +295,8 @@ public sealed partial class ForwardApiTerminal
             context.PlatformName,
             context.CancellationToken);
         var selected = accounts
-            .Where(account => TryReadSettings(account, out var settings) && settings.Enabled && settings.AutoCheckIn)
+            .Where(account => account.Status.State is not (ResourceState.Disabled or ResourceState.Invalid)
+                && TryReadSettings(account, out var settings) && settings.Enabled && settings.AutoCheckIn)
             .ToArray();
 
         foreach (var account in selected)
@@ -635,7 +706,7 @@ public sealed partial class ForwardApiTerminal
             request.Headers.TryAddWithoutValidation("Authorization", authorization);
         }
 
-        using var client = _host.Http.CreateDirectClient(new PluginHttpClientOptions { AllowAutoRedirect = true });
+        using var client = await CreateAccountClientAsync(settings, cancellationToken);
         using var response = await client.SendAsync(
             request,
             HttpCompletionOption.ResponseHeadersRead,
@@ -767,7 +838,8 @@ public sealed partial class ForwardApiTerminal
     /// <summary>分块读取上游响应原始字节，并在枚举结束或取消时释放响应流和响应对象。</summary>
     private static async IAsyncEnumerable<ReadOnlyMemory<byte>> ReadRawStreamAsync(
         HttpResponseMessage response,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
+        [EnumeratorCancellation] CancellationToken cancellationToken,
+        ProxyResponseLifetime? proxyLifetime = null)
     {
         try
         {
@@ -783,6 +855,7 @@ public sealed partial class ForwardApiTerminal
         finally
         {
             response.Dispose();
+            proxyLifetime?.Dispose();
         }
     }
 
@@ -1081,7 +1154,8 @@ public sealed partial class ForwardApiTerminal
         var safe = message ?? "未知错误";
         if (settings is not null)
         {
-            foreach (var secret in new[] { settings.ApiKey, settings.Password })
+            foreach (var secret in new[] { settings.ApiKey, settings.Password, settings.ProxyPassword,
+                Convert.ToBase64String(Encoding.UTF8.GetBytes(settings.ProxyUsername + ":" + settings.ProxyPassword)) })
                 if (!string.IsNullOrEmpty(secret))
                     safe = safe.Replace(secret, "[已隐藏]", StringComparison.Ordinal);
         }
@@ -1115,18 +1189,23 @@ public sealed partial class ForwardApiTerminal
         AdapterRequest source,
         ForwardApiSettings settings,
         JsonObject extra,
-        IReadOnlyDictionary<string, string> replaceHeaders)
+        IReadOnlyDictionary<string, string> replaceHeaders,
+        string? upstreamEndpoint = null)
     {
+        var endpoint = upstreamEndpoint ?? source.Endpoint;
+        var protocolChanged = !endpoint.Equals(source.Endpoint, StringComparison.OrdinalIgnoreCase);
         foreach (var header in source.RequestHeaders)
         {
             if (header.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)
                 || header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
                 || header.Key.Equals("X-Api-Key", StringComparison.OrdinalIgnoreCase))
                 continue;
+            if (protocolChanged && (header.Key.StartsWith("anthropic-", StringComparison.OrdinalIgnoreCase)
+                || header.Key.Equals("OpenAI-Beta", StringComparison.OrdinalIgnoreCase))) continue;
             request.Headers.TryAddWithoutValidation(header.Key, header.Value);
         }
 
-        var isMessages = source.Endpoint.Equals("/v1/messages", StringComparison.OrdinalIgnoreCase);
+        var isMessages = endpoint.Equals("/v1/messages", StringComparison.OrdinalIgnoreCase);
         var keyHeader = ReadString(extra, "apiKeyHeader")
             ?? (isMessages ? "x-api-key" : "Authorization");
         if (!IsSafeCustomHeader(keyHeader))

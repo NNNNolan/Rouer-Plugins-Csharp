@@ -51,8 +51,8 @@ public sealed partial class ForwardApiTerminal(IPluginHost host)
     public PluginMainPage GetMainPage() => CreateMainPage();
 
     /// <summary>
-    /// 返回当前平台可用模型目录。需要强制刷新或内存快照尚未加载时，会从宿主账号存储重建；
-    /// 对外只公布已启用账号明确允许使用的模型。
+    /// 返回当前平台可用模型目录。每次查询均核对宿主账号状态，
+    /// 对外只公布已启用且未被宿主禁用/标记无效的账号明确允许使用的模型。
     /// </summary>
     /// <param name="context">宿主提供的平台、缓存和模型查询上下文。</param>
     /// <param name="cancellationToken">取消本次账号查询和缓存访问的令牌。</param>
@@ -61,17 +61,9 @@ public sealed partial class ForwardApiTerminal(IPluginHost host)
         ModelQueryContext context,
         CancellationToken cancellationToken)
     {
-        var snapshot = Volatile.Read(ref _accountModelSnapshot);
-        var useFreshSnapshot = context.ForceRefresh || !snapshot.IsLoaded;
-        if (context.ForceRefresh)
-            snapshot = await RebuildAccountModelSnapshotAsync(_host.PluginKey, cancellationToken, forceRefresh: true);
-        else if (!snapshot.IsLoaded)
-            snapshot = await RebuildAccountModelSnapshotAsync(_host.PluginKey, cancellationToken, forceRefresh: false);
-
-        var models = useFreshSnapshot
-            ? snapshot.Models
-            : await ReadCachedModelsAsync(ForwardApiPlatform, cancellationToken) ?? snapshot.Models;
-        return models
+        // 宿主可因无效凭据或管理员操作直接禁用账号；不能让旧快照/共享缓存继续公布其独有模型。
+        var snapshot = await RebuildAccountModelSnapshotAsync(_host.PluginKey, cancellationToken);
+        return snapshot.Models
             .Select(model => new ModelDescriptor(model, model))
             .ToArray();
     }
@@ -93,6 +85,8 @@ public sealed partial class ForwardApiTerminal(IPluginHost host)
             return Task.FromResult(new CredentialValidationResult(false, "API key is empty"));
         if (!TryValidateBaseUrl(settings.BaseUrl, out var error))
             return Task.FromResult(new CredentialValidationResult(false, error));
+        if (!TryValidateProxySettings(settings, out var proxyError))
+            return Task.FromResult(new CredentialValidationResult(false, proxyError));
         if (!TryReadReplaceHeaders(ReadExtraParams(settings), out _, out var headerError))
             return Task.FromResult(new CredentialValidationResult(false, headerError));
         return Task.FromResult(new CredentialValidationResult(true));
@@ -139,6 +133,8 @@ public sealed partial class ForwardApiTerminal(IPluginHost host)
     /// <summary>判断账号是否启用，并且同时声明支持当前端点和请求模型。</summary>
     private bool IsAccountEligible(Account account, AdapterRequest request)
     {
+        if (account.Status.State is ResourceState.Disabled or ResourceState.Invalid)
+            return false;
         var policy = GetAccountModelPolicy(account);
         if (policy is null || !policy.Enabled)
             return false;
@@ -285,6 +281,10 @@ public sealed partial class ForwardApiTerminal(IPluginHost host)
         try
         {
             settings = JsonSerializer.Deserialize<ForwardApiSettings>(json, JsonOptions) ?? new ForwardApiSettings();
+            settings.ProxyMode ??= "direct";
+            settings.ProxyUrl ??= string.Empty;
+            settings.ProxyUsername ??= string.Empty;
+            settings.ProxyPassword ??= string.Empty;
             settings.Endpoints = settings.Endpoints
                 .Select(NormalizeEndpoint)
                 .Where(endpoint => SupportedEndpoints.Contains(endpoint, StringComparer.OrdinalIgnoreCase))
@@ -382,7 +382,26 @@ public sealed partial class ForwardApiTerminal(IPluginHost host)
         public bool Enabled { get; set; } = true;
         /// <summary>站点认证、额度和签到接口的 JSON 扩展配置。</summary>
         public string ExtraParams { get; set; } = "{}";
+        /// <summary>上游 API：original（默认透传）、responses 或 chat。</summary>
+        public string UpstreamApi { get; set; } = "original";
+        /// <summary>请求出口：direct（旧账号默认）、pool 或 custom。</summary>
+        public string ProxyMode { get; set; } = "direct";
+        /// <summary>指定代理的连接地址，不包含认证信息。</summary>
+        public string ProxyUrl { get; set; } = string.Empty;
+        /// <summary>指定代理认证用户名。</summary>
+        public string ProxyUsername { get; set; } = string.Empty;
+        /// <summary>指定代理认证密码，仅保存在服务端凭据中。</summary>
+        public string ProxyPassword { get; set; } = string.Empty;
     }
+
+    internal static string? NormalizeUpstreamApi(string? value)
+        => value?.Trim().ToLowerInvariant() switch
+        {
+            null or "" or "original" => "original",
+            "responses" => "responses",
+            "chat" => "chat",
+            _ => null
+        };
 
     /// <summary>单个账号在内存模型快照中的资格、权重和模型/端点范围。</summary>
     /// <param name="Enabled">账号是否满足启用及宿主状态要求。</param>
