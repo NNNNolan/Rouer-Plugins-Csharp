@@ -54,6 +54,10 @@ public sealed partial class ForwardApiTerminal
         if (string.IsNullOrWhiteSpace(apiKey))
             return context.BadRequest("API Key 不能为空");
 
+        var upstreamApi = NormalizeUpstreamApi(input.UpstreamApi ?? previous.UpstreamApi);
+        if (upstreamApi is null)
+            return context.BadRequest("上游 API 必须是 original、responses 或 chat");
+
         var label = input.Label?.Trim();
         if (string.IsNullOrWhiteSpace(label))
             return context.BadRequest("账号名称不能为空");
@@ -74,6 +78,7 @@ public sealed partial class ForwardApiTerminal
             SiteType = siteType,
             BaseUrl = baseUrl,
             ApiKey = apiKey,
+            UpstreamApi = upstreamApi,
             Username = input.Username?.Trim() ?? previous.Username,
             Password = string.IsNullOrEmpty(input.Password) ? previous.Password : input.Password,
             Weight = Math.Clamp(input.Weight ?? previous.Weight, 0, 1000),
@@ -82,6 +87,9 @@ public sealed partial class ForwardApiTerminal
             Enabled = input.Enabled ?? previous.Enabled,
             ExtraParams = extraParams
         };
+        if (!TryApplyProxySettings(settings, previous, input.ProxyMode, input.ProxyUrl,
+                input.ProxyUsername, input.ProxyPassword, out var proxyError))
+            return context.BadRequest(proxyError);
 
         var credentialsChanged = existing is null
             || !string.Equals(siteType, previous.SiteType, StringComparison.OrdinalIgnoreCase)
@@ -137,7 +145,15 @@ public sealed partial class ForwardApiTerminal
         fields["modelsConfigured"] = "true";
         fields["settings"] = JsonSerializer.Serialize(settings, JsonOptions);
         var status = existing?.Status ?? new ResourceStatus();
-        if (existing is not null
+        if (!settings.Enabled)
+            status = new ResourceStatus
+            {
+                State = ResourceState.Disabled,
+                Reason = "管理员禁用账号",
+                InFlight = status.InFlight,
+                Version = status.Version + 1
+            };
+        else if (existing is not null
             && (credentialsChanged || (input.Enabled == true && settings.Enabled))
             && (status.State is ResourceState.Disabled or ResourceState.Invalid))
             status = new ResourceStatus { Version = status.Version + 1 };
@@ -198,6 +214,9 @@ public sealed partial class ForwardApiTerminal
             ApiKey = apiKey,
             ExtraParams = extraParams
         };
+        if (!TryApplyProxySettings(settings, previous, input.ProxyMode, input.ProxyUrl,
+                input.ProxyUsername, input.ProxyPassword, out var proxyError))
+            return context.BadRequest(proxyError);
 
         try
         {
@@ -214,6 +233,62 @@ public sealed partial class ForwardApiTerminal
         {
             return context.Json(502, new { error = SanitizeMessage(exception.Message, settings) });
         }
+    }
+
+    /// <summary>独立启用或禁用账号，保留连接和模型配置并立即刷新可用模型目录。</summary>
+    /// <param name="context">请求体需包含账号 ID 和明确的 enabled 布尔值。</param>
+    /// <returns>更新后的脱敏账号卡片。</returns>
+    [PluginEndpoint("POST", "accounts/enabled")]
+    public async Task<PluginResult> SetAccountEnabledAsync(PluginHttpContext context)
+    {
+        if (!TryReadBody<AccountEnabledInput>(context.Body, out var input)
+            || string.IsNullOrWhiteSpace(input.Id) || input.Enabled is null)
+            return context.BadRequest("请提供账号 ID 和 enabled 布尔值");
+        var account = await _host.Accounts.GetAsync(input.Id, context.CancellationToken);
+        if (account is null
+            || !string.Equals(account.PluginKey, context.PluginKey, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(account.Platform, ForwardApiPlatform, StringComparison.OrdinalIgnoreCase))
+            return context.Json(404, new { error = "账号不存在" });
+        if (!TryReadSettings(account, out var settings))
+            return context.BadRequest("账号配置无效");
+
+        settings.Enabled = input.Enabled.Value;
+        var fields = CopyCredentialFields(account);
+        // 只更新开关，保留旧账号或未来版本写入的未知设置字段。
+        var settingsNode = JsonNode.Parse(fields["settings"]!)!.AsObject();
+        foreach (var key in settingsNode.Select(pair => pair.Key)
+                     .Where(key => key.Equals("enabled", StringComparison.OrdinalIgnoreCase)).ToArray())
+            settingsNode.Remove(key);
+        settingsNode["enabled"] = settings.Enabled;
+        fields["settings"] = settingsNode.ToJsonString(JsonOptions);
+        account.Credential = new CustomCredential(fields);
+        if (!settings.Enabled)
+            account.Status = new ResourceStatus
+            {
+                State = ResourceState.Disabled,
+                Reason = "管理员禁用账号",
+                InFlight = account.Status.InFlight,
+                Version = account.Status.Version + 1
+            };
+        else if (account.Status.State is ResourceState.Disabled or ResourceState.Invalid)
+            account.Status = new ResourceStatus
+            {
+                InFlight = account.Status.InFlight,
+                Version = account.Status.Version + 1
+            };
+        var saved = await _host.Accounts.SaveAsync(account, context.CancellationToken);
+        await RebuildAccountModelSnapshotAsync(context.PluginKey, context.CancellationToken);
+        _host.Models.Invalidate(ForwardApiPlatform);
+        await TryLogAsync("account.enabled", $"账号“{account.Label ?? account.Id}”已{(settings.Enabled ? "启用" : "禁用")}",
+            accountId: account.Id, details: new { settings.Enabled });
+        return context.Ok(new { account = ToAccountCard(saved) });
+    }
+
+    private sealed class AccountEnabledInput
+    {
+        public AccountEnabledInput() { }
+        public string? Id { get; init; }
+        public bool? Enabled { get; init; }
     }
 
     /// <summary>从宿主账号存储中删除指定账号，并刷新本地模型快照。</summary>
@@ -372,11 +447,16 @@ public sealed partial class ForwardApiTerminal
             id = account.Id,
             label = account.Label ?? string.Empty,
             siteType = settings.SiteType,
+            upstreamApi = settings.UpstreamApi,
             baseUrl = settings.BaseUrl,
             apiKeyMasked = MaskSecret(key),
             hasApiKey = !string.IsNullOrWhiteSpace(key),
             username = settings.Username,
             hasPassword = !string.IsNullOrEmpty(settings.Password),
+            proxyMode = settings.ProxyMode,
+            proxyUrl = settings.ProxyUrl,
+            proxyUsername = settings.ProxyUsername,
+            hasProxyPassword = !string.IsNullOrEmpty(settings.ProxyPassword),
             weight = settings.Weight,
             endpoints = settings.Endpoints,
             autoCheckIn = settings.AutoCheckIn,
@@ -398,7 +478,7 @@ public sealed partial class ForwardApiTerminal
     {
         if (!TryReadReplaceHeaders(ReadExtraParams(settings), out var replaceHeaders, out var error))
             return (null, 400, error);
-        using var client = _host.Http.CreateDirectClient(new PluginHttpClientOptions { AllowAutoRedirect = true });
+        using var client = await CreateAccountClientAsync(settings, cancellationToken);
         using var request = new HttpRequestMessage(HttpMethod.Get, BuildUri(settings.BaseUrl, "/v1/models"));
         ApplyApiKeyHeader(request, settings);
         ApplyReplaceHeaders(request, replaceHeaders);
@@ -438,7 +518,7 @@ public sealed partial class ForwardApiTerminal
         if (!isNewApi && !isSub2Api)
             throw new InvalidOperationException("通用 API 没有标准的额度查询接口");
 
-        using var client = _host.Http.CreateDirectClient(new PluginHttpClientOptions { AllowAutoRedirect = true });
+        using var client = await CreateAccountClientAsync(settings, cancellationToken);
         var path = isNewApi ? "/api/usage/token" : "/v1/usage";
         using var response = await SendQuotaRequestAsync(client, settings, path, cancellationToken);
         var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -805,10 +885,20 @@ public sealed partial class ForwardApiTerminal
         public string? Label { get; init; }
         /// <summary>站点类型：NewAPI、Sub2API 或 Custom。</summary>
         public string? SiteType { get; init; }
+        /// <summary>上游 API：original、responses 或 chat；未提交时沿用原值。</summary>
+        public string? UpstreamApi { get; init; }
         /// <summary>上游站点 Base URL。</summary>
         public string? BaseUrl { get; init; }
         /// <summary>上游 API Key；编辑时为空表示保留现有值。</summary>
         public string? ApiKey { get; init; }
+        /// <summary>账号出口：direct、pool 或 custom；未提交时沿用原值。</summary>
+        public string? ProxyMode { get; init; }
+        /// <summary>指定代理地址，不包含用户凭据。</summary>
+        public string? ProxyUrl { get; init; }
+        /// <summary>指定代理的认证用户名。</summary>
+        public string? ProxyUsername { get; init; }
+        /// <summary>指定代理密码；留空仅在出口、地址和用户名均未变化时保留旧值。</summary>
+        public string? ProxyPassword { get; init; }
         /// <summary>供站点签到登录使用的用户名。</summary>
         public string? Username { get; init; }
         /// <summary>供站点签到登录使用的密码；编辑时为空表示保留现有值。</summary>
@@ -839,10 +929,20 @@ public sealed partial class ForwardApiTerminal
         public string? Id { get; init; }
         /// <summary>站点适配类型。</summary>
         public string? SiteType { get; init; }
+        /// <summary>可随表单提交的上游 API 设置；模型目录查询不依赖此值。</summary>
+        public string? UpstreamApi { get; init; }
         /// <summary>待查询站点的 Base URL。</summary>
         public string? BaseUrl { get; init; }
         /// <summary>用于本次目录查询的 API Key。</summary>
         public string? ApiKey { get; init; }
+        /// <summary>本次目录查询的出口：direct、pool 或 custom。</summary>
+        public string? ProxyMode { get; init; }
+        /// <summary>指定代理地址，不包含用户凭据。</summary>
+        public string? ProxyUrl { get; init; }
+        /// <summary>指定代理的认证用户名。</summary>
+        public string? ProxyUsername { get; init; }
+        /// <summary>指定代理密码；未变更代理时留空可沿用已保存密码。</summary>
+        public string? ProxyPassword { get; init; }
         /// <summary>可选的模型 API 认证头等扩展参数。</summary>
         public JsonElement? ExtraParams { get; init; }
     }
