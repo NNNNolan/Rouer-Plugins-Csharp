@@ -23,17 +23,25 @@ public sealed partial class ModelRotatorTerminal
         doc.State.Timeouts.ContainsKey(StateKey(virtualModel, model))
         || doc.State.Failures.ContainsKey(StateKey(virtualModel, model));
 
+    private static bool IsDemoted(RotatorDocument doc, string virtualModel, string model)
+    {
+        var key = StateKey(virtualModel, model);
+        var threshold = Math.Clamp(doc.Settings.DemoteThreshold, 1, 100);
+        return doc.State.Failures.GetValueOrDefault(key) >= threshold
+            || doc.State.Timeouts.GetValueOrDefault(key) >= threshold;
+    }
+
     internal static List<string> SelectCandidates(RotatorDocument doc, RotatorRoute route)
     {
         var healthy = route.Targets.Where(model => !doc.State.Disabled.ContainsKey(DisabledKey(route.VirtualModel, model))).ToList();
         if (healthy.Count == 0) return [];
-        // 计数未清零的目标排到最后：刚失败/超时过的目标不该每次都被第一个撞，
-        // 否则固定顺序 + sticky 会把整条链路反复拖进同一次超时。
-        var ordered = healthy.OrderBy(model => IsUnsettled(doc, route.VirtualModel, model) ? 1 : 0).ToList();
+        // 失败桶或超时桶达到降级阈值后排到队尾；OrderBy 保留组内优先级。
+        // 默认阈值 1 延续快速轮转，调高阈值可让短暂抖动的目标继续优先。
+        var ordered = healthy.OrderBy(model => IsDemoted(doc, route.VirtualModel, model) ? 1 : 0).ToList();
         if (doc.Settings.ActivationPolicy == "prefer-highest") return ordered;
         if (doc.State.Active.TryGetValue(route.VirtualModel, out var active)
             && ordered.Contains(active, StringComparer.OrdinalIgnoreCase)
-            && !IsUnsettled(doc, route.VirtualModel, active))
+            && !IsDemoted(doc, route.VirtualModel, active))
             return [active, .. ordered.Where(model => !model.Equals(active, StringComparison.OrdinalIgnoreCase))];
         return ordered;
     }
@@ -80,7 +88,7 @@ public sealed partial class ModelRotatorTerminal
             var isFirst = !doc.State.Active.TryGetValue(route.VirtualModel, out var active);
             var activeHealthy = active is not null
                 && !doc.State.Disabled.ContainsKey(DisabledKey(route.VirtualModel, active))
-                && !IsUnsettled(doc, route.VirtualModel, active);
+                && !IsDemoted(doc, route.VirtualModel, active);
             if (doc.Settings.ActivationPolicy == "prefer-highest" || isFirst || !activeHealthy) doc.State.Active[route.VirtualModel] = model;
             // 请求数总是 +1：流式响应此刻还看不到 usage，但这一次成功请求必须计入，
             // 否则面板里的请求数会明显少于宿主日志。token 稍后由 RecordUsageAsync 补上。

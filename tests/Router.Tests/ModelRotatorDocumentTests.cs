@@ -75,6 +75,62 @@ public sealed class ModelRotatorDocumentTests
     }
 
     [TestMethod]
+    public void DemoteThresholdDefaultsToOneWhenMissingFromLegacySettings()
+    {
+        var legacy = JsonSerializer.Deserialize<RotatorDocument>(
+            """{"version":3,"settings":{"activationPolicy":"sticky"}}""",
+            ModelRotatorTerminal.JsonOptions);
+        Assert.IsNotNull(legacy);
+
+        var normalized = ModelRotatorTerminal.NormalizeDocument(legacy);
+
+        Assert.AreEqual(1, new RotatorSettings().DemoteThreshold);
+        Assert.AreEqual(1, ModelRotatorTerminal.EmptyDocument().Settings.DemoteThreshold);
+        Assert.AreEqual(1, normalized.Settings.DemoteThreshold,
+            "旧配置缺少全局降级阈值时，应保持一次失败或超时即降级的默认行为");
+    }
+
+    [TestMethod]
+    [DataRow(int.MinValue, 1)]
+    [DataRow(-1, 1)]
+    [DataRow(0, 1)]
+    [DataRow(1, 1)]
+    [DataRow(37, 37)]
+    [DataRow(100, 100)]
+    [DataRow(101, 100)]
+    [DataRow(int.MaxValue, 100)]
+    public void NormalizeDemoteThresholdClampsToAllowedRange(int input, int expected)
+    {
+        var normalized = ModelRotatorTerminal.NormalizeDocument(new RotatorDocument
+        {
+            Settings = new RotatorSettings { DemoteThreshold = input }
+        });
+
+        Assert.AreEqual(expected, normalized.Settings.DemoteThreshold,
+            "全局降级阈值必须收敛到 1..100，且区间内取值不变");
+    }
+
+    [TestMethod]
+    public void DemoteThresholdSerializesAsGlobalSettingAndSurvivesRoundTrip()
+    {
+        var document = new RotatorDocument
+        {
+            Settings = new RotatorSettings { DemoteThreshold = 7 },
+            Virtuals = [new RotatorRoute { VirtualModel = "route-a", Targets = ["model-a"], FailureThreshold = 11 }]
+        };
+
+        var json = JsonSerializer.Serialize(document, ModelRotatorTerminal.JsonOptions);
+        using var serialized = JsonDocument.Parse(json);
+        Assert.AreEqual(7, serialized.RootElement.GetProperty("settings").GetProperty("demoteThreshold").GetInt32());
+        Assert.IsFalse(serialized.RootElement.GetProperty("virtuals")[0].TryGetProperty("demoteThreshold", out _),
+            "降级阈值属于全局设置，不是路由的禁用阈值");
+        var restored = JsonSerializer.Deserialize<RotatorDocument>(json, ModelRotatorTerminal.JsonOptions);
+        Assert.IsNotNull(restored);
+        Assert.AreEqual(7, restored.Settings.DemoteThreshold);
+        Assert.AreEqual(11, restored.Virtuals[0].FailureThreshold, "全局降级阈值不能覆盖路由禁用阈值");
+    }
+
+    [TestMethod]
     public void UsageConverterAcceptsLegacyArrayRows()
     {
         var document = JsonSerializer.Deserialize<RotatorDocument>(

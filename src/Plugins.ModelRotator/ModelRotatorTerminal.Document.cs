@@ -174,6 +174,7 @@ public sealed partial class ModelRotatorTerminal
         settings.StreamIdleSeconds = ClampSeconds(settings.StreamIdleSeconds, 30, 5, 600);
         settings.ProbeIntervalMinutes = ClampSeconds(settings.ProbeIntervalMinutes, 5, 1, 60);
         settings.ProbeTimeoutSeconds = ClampSeconds(settings.ProbeTimeoutSeconds, 45, 5, 180);
+        settings.DemoteThreshold = Math.Clamp(settings.DemoteThreshold, 1, 100);
         settings.ActivationPolicy = settings.ActivationPolicy == "prefer-highest" ? "prefer-highest" : "sticky";
 
         var seenRoutes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -331,6 +332,7 @@ internal sealed class RotatorSettings
     public int ProbeIntervalMinutes { get; set; } = 5;
     /// <summary>单个目标的探测等待上限秒数。免费模型首字节常超过 12 秒，太短会把慢但可用的目标判成异常。</summary>
     public int ProbeTimeoutSeconds { get; set; } = 45;
+    public int DemoteThreshold { get; set; } = 1;
     public long LastProbeAt { get; set; }
     public string ActivationPolicy { get; set; } = "sticky";
 }

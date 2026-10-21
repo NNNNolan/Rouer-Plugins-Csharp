@@ -6,6 +6,7 @@ using Moq;
 using Plugins.ModelRotator;
 using Router.Contracts.Domain;
 using Router.Contracts.Host;
+using Router.Contracts.Plugins;
 
 namespace Router.Tests;
 
@@ -240,6 +241,160 @@ public sealed class ModelRotatorInvokeTests
         Assert.AreEqual(1, harness.Accounts.Failures()["route-a\u001fmodel-a"]!.GetValue<int>(), "上游凭据拒绝应计入该目标故障计数");
     }
 
+    [TestMethod]
+    [DataRow(false, 3, 1, 0, "model-a")]
+    [DataRow(true, 3, 1, 0, "model-a")]
+    [DataRow(false, 3, 1, 2, "model-a")]
+    [DataRow(true, 3, 1, 2, "model-a")]
+    [DataRow(false, 3, 2, 0, "model-b")]
+    [DataRow(true, 3, 2, 0, "model-b")]
+    [DataRow(false, 1, 0, 0, "model-b")]
+    [DataRow(true, 1, 0, 0, "model-b")]
+    public async Task StickyFallbackSuccessChangesPinOnlyWhenActiveReachesDemoteThreshold(
+        bool timeoutBucket, int demoteThreshold, int initialCount, int otherBucketCount, string expectedActive)
+    {
+        var harness = new Harness();
+        var document = JsonSerializer.Deserialize<RotatorDocument>(ConfigJson, ModelRotatorTerminal.JsonOptions)!;
+        document.Settings.DemoteThreshold = demoteThreshold;
+        document.Virtuals[0].FailureThreshold = 10;
+        document.State.Active["route-a"] = "model-a";
+        var counts = timeoutBucket ? document.State.Timeouts : document.State.Failures;
+        if (initialCount > 0) counts["route-a\u001fmodel-a"] = initialCount;
+        var otherCounts = timeoutBucket ? document.State.Failures : document.State.Timeouts;
+        if (otherBucketCount > 0) otherCounts["route-a\u001fmodel-a"] = otherBucketCount;
+        harness.Accounts.Seed(JsonSerializer.Serialize(document, ModelRotatorTerminal.JsonOptions), version: 7);
+        harness.Http.Respond(_ => timeoutBucket
+            ? throw new OperationCanceledException("模拟首字节超时")
+            : Json(HttpStatusCode.InternalServerError, """{"error":"boom"}"""));
+        harness.Http.Respond(_ => Json(HttpStatusCode.OK, """{"id":"fallback","choices":[]}"""));
+        using var terminal = harness.Build();
+
+        var result = await terminal.InvokeAsync(harness.Attempt("route-a"));
+
+        Assert.AreEqual(200, result.Response.StatusCode);
+        CollectionAssert.AreEqual(ModelAThenB, harness.Http.RequestedModels.ToArray());
+        Assert.AreEqual(expectedActive, harness.Accounts.Active()["route-a"]!.GetValue<string>(),
+            "备用目标成功后，应按原活跃目标的单个桶是否达到降级阈值决定是否接管 pin");
+        var storedCounts = timeoutBucket ? harness.Accounts.Timeouts() : harness.Accounts.Failures();
+        Assert.AreEqual(initialCount + 1, storedCounts["route-a\u001fmodel-a"]!.GetValue<int>(),
+            "未达到路由禁用阈值的失败或超时计数应继续保留");
+        Assert.IsNull(harness.Accounts.Document()["state"]?["disabled"]?["route-a\u001fmodel-a"],
+            "降级不等于禁用，路由禁用阈值仍独立生效");
+
+        harness.Http.Respond(_ => Json(HttpStatusCode.OK, """{"id":"next","choices":[]}"""));
+        var next = await terminal.InvokeAsync(harness.Attempt("route-a"));
+
+        Assert.AreEqual(200, next.Response.StatusCode);
+        Assert.AreEqual(expectedActive, harness.Http.RequestedModels[^1], "下一次请求应继续使用保留或接管后的 pin");
+    }
+
+    [TestMethod]
+    [DataRow(1)]
+    [DataRow(9)]
+    [DataRow(100)]
+    public async Task SettingsGetUsesLegacyDefaultAndSaveRoundTripsGlobalDemoteThreshold(int demoteThreshold)
+    {
+        var harness = new Harness();
+        harness.Accounts.Seed(ConfigJson, version: 7);
+        using var terminal = harness.Build();
+
+        var legacy = await terminal.GetSettingsAsync(Context(new { }));
+        Assert.AreEqual(200, legacy.StatusCode);
+        Assert.AreEqual(1, JsonSerializer.SerializeToElement(legacy.Body).GetProperty("demoteThreshold").GetInt32(),
+            "旧配置 GET 必须显式给出默认降级阈值");
+
+        var save = await terminal.SaveSettingsAsync(Context(new
+        {
+            baseUrl = "http://127.0.0.1:8080",
+            activationPolicy = "prefer-highest",
+            demoteThreshold
+        }));
+
+        Assert.AreEqual(200, save.StatusCode);
+        Assert.AreEqual(demoteThreshold, harness.Accounts.Document()["settings"]!["demoteThreshold"]!.GetValue<int>(),
+            "SAVE 必须把全局降级阈值写入账号配置");
+        var loaded = await terminal.GetSettingsAsync(Context(new { }));
+        Assert.AreEqual(200, loaded.StatusCode);
+        var loadedSettings = JsonSerializer.SerializeToElement(loaded.Body);
+        Assert.AreEqual(demoteThreshold, loadedSettings.GetProperty("demoteThreshold").GetInt32());
+        Assert.AreEqual("prefer-highest", loadedSettings.GetProperty("activationPolicy").GetString());
+        Assert.AreEqual(3, harness.Accounts.Document()["virtuals"]![0]!["failureThreshold"]!.GetValue<int>(),
+            "保存全局降级阈值不能改变路由禁用阈值");
+        Assert.AreEqual(0, harness.Http.SendCount, "读写设置不应发起上游 HTTP 请求");
+    }
+
+    [TestMethod]
+    [DataRow("-1")]
+    [DataRow("0")]
+    [DataRow("101")]
+    [DataRow("2147483647")]
+    [DataRow("1.5")]
+    [DataRow("\"invalid\"")]
+    public async Task SettingsSaveRejectsInvalidDemoteThresholdWithoutChangingStoredSettings(string invalidValue)
+    {
+        var harness = new Harness();
+        harness.Accounts.Seed(ConfigJson, version: 7);
+        using var terminal = harness.Build();
+        var before = harness.Accounts.Document().ToJsonString();
+        var body = JsonNode.Parse("""{"baseUrl":"http://127.0.0.1:8080","activationPolicy":"sticky"}""")!.AsObject();
+        body["demoteThreshold"] = JsonNode.Parse(invalidValue);
+
+        var rejected = await terminal.SaveSettingsAsync(Context(body));
+
+        Assert.AreEqual(400, rejected.StatusCode, "范围外与非整数输入必须拒绝");
+        Assert.AreEqual(7L, harness.Accounts.Account!.CredentialVersion, "非法设置不能触发 CAS 写回");
+        Assert.AreEqual(before, harness.Accounts.Document().ToJsonString());
+        Assert.AreEqual(0, harness.Http.SendCount);
+    }
+
+    [TestMethod]
+    [DataRow(false, false)]
+    [DataRow(false, true)]
+    [DataRow(true, false)]
+    [DataRow(true, true)]
+    public async Task SettingsSaveWithoutDemoteThresholdPreservesExistingOrLegacyDefault(bool configured, bool explicitNull)
+    {
+        var harness = new Harness();
+        var document = JsonNode.Parse(ConfigJson)!;
+        if (configured) document["settings"]!["demoteThreshold"] = 7;
+        harness.Accounts.Seed(document.ToJsonString(), version: 7);
+        using var terminal = harness.Build();
+        var body = new JsonObject { ["baseUrl"] = "http://127.0.0.1:8080" };
+        if (explicitNull) body["demoteThreshold"] = null;
+
+        var saved = await terminal.SaveSettingsAsync(Context(body));
+
+        Assert.AreEqual(200, saved.StatusCode, "旧客户端未传降级阈值或传 null 时，仍应允许保存设置");
+        Assert.AreEqual(configured ? 7 : 1, harness.Accounts.Document()["settings"]!["demoteThreshold"]!.GetValue<int>(),
+            "省略字段时必须保留已有阈值，旧配置则使用默认 1");
+    }
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task ScheduledProbeStillRecoversCountsBelowDemoteThreshold(bool timeoutBucket)
+    {
+        var harness = new Harness();
+        var document = JsonSerializer.Deserialize<RotatorDocument>(ConfigJson, ModelRotatorTerminal.JsonOptions)!;
+        document.Settings.DemoteThreshold = 3;
+        document.State.Active["route-a"] = "model-a";
+        var counts = timeoutBucket ? document.State.Timeouts : document.State.Failures;
+        counts["route-a\u001fmodel-a"] = 1;
+        harness.Accounts.Seed(JsonSerializer.Serialize(document, ModelRotatorTerminal.JsonOptions), version: 7);
+        using var terminal = harness.Build();
+
+        await terminal.ScheduledTasks.Single().ExecuteAsync(new PluginScheduledTaskContext(
+            "modelrotator", "modelrotator", CancellationToken.None));
+
+        CollectionAssert.AreEqual(OnlyModelA, harness.ProbeModels.ToArray(),
+            "后台探测必须继续选择低于降级阈值但计数尚未清零的目标，未计数目标不需要探测");
+        Assert.IsEmpty(harness.Accounts.Failures(), "成功探测应清除失败桶");
+        Assert.IsEmpty(harness.Accounts.Timeouts(), "成功探测应清除超时桶");
+        Assert.AreEqual("model-a", harness.Accounts.Active()["route-a"]!.GetValue<string>(),
+            "恢复探测不应改写当前 pin");
+        Assert.IsTrue(harness.Accounts.Document()["settings"]!["lastProbeAt"]!.GetValue<long>() > 0);
+    }
+
     private static readonly string[] OnlyModelA = ["model-a"];
 
     private static readonly string[] ModelAThenB = ["model-a", "model-b"];
@@ -283,7 +438,10 @@ public sealed class ModelRotatorInvokeTests
             _services.SetupGet(services => services.Models).Returns(Mock.Of<IPluginModels>());
             _services.SetupGet(services => services.State)
                 .Returns(new PluginStateServices(Mock.Of<IPluginStateStore>(), Mock.Of<IPluginStateStore>()));
-            _services.SetupGet(services => services.Http).Returns(Mock.Of<IPluginHttpServices>());
+            var httpServices = new Mock<IPluginHttpServices>();
+            httpServices.Setup(services => services.CreateDirectClient(It.IsAny<PluginHttpClientOptions>()))
+                .Returns(() => new HttpClient(new ProbeHandler(ProbeModels)));
+            _services.SetupGet(services => services.Http).Returns(httpServices.Object);
             _host.SetupGet(host => host.PluginKey).Returns("modelrotator");
             _host.SetupGet(host => host.Services).Returns(_services.Object);
         }
@@ -291,6 +449,8 @@ public sealed class ModelRotatorInvokeTests
         public RecordingAccounts Accounts { get; }
 
         public RecordingHttp Http { get; }
+
+        public List<string> ProbeModels { get; } = [];
 
         public ModelRotatorTerminal Build() => new(_host.Object);
 
@@ -341,7 +501,9 @@ public sealed class ModelRotatorInvokeTests
 
         public JsonObject Active() => Document()["state"]?["active"] as JsonObject ?? new JsonObject();
 
-        private JsonObject Document()
+        public JsonObject Timeouts() => Document()["state"]?["timeouts"] as JsonObject ?? new JsonObject();
+
+        public JsonObject Document()
         {
             var json = ((CustomCredential)_account!.Credential).Fields["config"]!;
             return JsonNode.Parse(json)!.AsObject();
@@ -380,6 +542,17 @@ public sealed class ModelRotatorInvokeTests
             _account.Credential = credential;
             _account.CredentialVersion++;
             return Task.FromResult<Account?>(_account);
+        }
+    }
+
+    /// <summary>探测使用独立 HttpClient，但请求仍在内存返回，不连接真实回环服务。</summary>
+    private sealed class ProbeHandler(List<string> requestedModels) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            requestedModels.Add(JsonNode.Parse(body)!["model"]!.GetValue<string>());
+            return Json(HttpStatusCode.OK, """{"choices":[{"message":{"content":"healthy"}}]}""");
         }
     }
 
