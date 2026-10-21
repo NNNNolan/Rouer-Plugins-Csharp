@@ -36,6 +36,7 @@ public sealed partial class ModelRotatorTerminal
             streamIdleSeconds = settings.StreamIdleSeconds,
             probeIntervalMinutes = settings.ProbeIntervalMinutes,
             probeTimeoutSeconds = settings.ProbeTimeoutSeconds,
+            demoteThreshold = settings.DemoteThreshold,
             lastProbeAt = settings.LastProbeAt,
             activationPolicy = settings.ActivationPolicy
         });
@@ -310,6 +311,7 @@ public sealed partial class ModelRotatorTerminal
             || input.StreamIdleSeconds is < 5 or > 600 || input.ProbeIntervalMinutes is < 1 or > 60
             || input.ProbeTimeoutSeconds is < 5 or > 180)
             return context.BadRequest("等待、预算或探测间隔超出允许范围");
+        if (input.DemoteThreshold is < 1 or > 100) return context.BadRequest("失败降级阈值必须在 1–100 之间");
         if (input.ActivationPolicy is not ("sticky" or "prefer-highest")) return context.BadRequest("活跃位切换策略无效");
 
         var current = await ReadDocumentAsync(context.CancellationToken);
@@ -323,6 +325,7 @@ public sealed partial class ModelRotatorTerminal
             doc.Settings.StreamIdleSeconds = input.StreamIdleSeconds;
             doc.Settings.ProbeIntervalMinutes = input.ProbeIntervalMinutes;
             doc.Settings.ProbeTimeoutSeconds = input.ProbeTimeoutSeconds;
+            if (input.DemoteThreshold.HasValue) doc.Settings.DemoteThreshold = input.DemoteThreshold.Value;
             doc.Settings.ActivationPolicy = input.ActivationPolicy;
             return true;
         }, context.CancellationToken);
@@ -395,8 +398,8 @@ public sealed partial class ModelRotatorTerminal
         if (doc.Settings.LastProbeAt > 0
             && TimeSpan.FromMilliseconds(now - doc.Settings.LastProbeAt) < TimeSpan.FromMinutes(doc.Settings.ProbeIntervalMinutes))
             return new PluginResult { StatusCode = 204 };
-        // 后台探测不只看被禁用的目标：失败/超时计数未清零但还没禁用的目标同样沉在候选队尾，
-        // 也需要靠探测成功来清计数，否则永远回不到轮转前排。
+        // 任意未清零计数都需要探测恢复，包含尚未达到降级阈值的目标。
+        // 探测成功清计数，避免偶发故障一直累计或已降级目标长期沉底。
         var targets = doc.Virtuals.SelectMany(route => route.Targets.Select(model => (Route: route, Model: model)))
             .Where(item => doc.State.Disabled.ContainsKey(DisabledKey(item.Route.VirtualModel, item.Model))
                 || item.Route.Enabled && IsUnsettled(doc, item.Route.VirtualModel, item.Model))
@@ -627,6 +630,7 @@ public sealed partial class ModelRotatorTerminal
         public int StreamIdleSeconds { get; init; } = 30;
         public int ProbeIntervalMinutes { get; init; } = 5;
         public int ProbeTimeoutSeconds { get; init; } = 45;
+        public int? DemoteThreshold { get; init; }
         public string ActivationPolicy { get; init; } = "sticky";
     }
     private sealed class ProbeInput { public string[]? Targets { get; init; } }
