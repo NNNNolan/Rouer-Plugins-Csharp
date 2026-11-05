@@ -595,7 +595,7 @@ public sealed partial class ModelRotatorTerminal
             var element = body switch
             {
                 JsonElement json => json,
-                string text => JsonDocument.Parse(text).RootElement.Clone(),
+                string text => JsonElement.Parse(text),
                 null => default,
                 _ => JsonSerializer.SerializeToElement(body, JsonOptions)
             };
