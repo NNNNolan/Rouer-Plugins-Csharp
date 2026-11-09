@@ -15,7 +15,7 @@ param(
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
     [string]$OutputDirectory = (Join-Path $PSScriptRoot 'artifacts/plugins'),
     [string]$Project = (Join-Path $PSScriptRoot 'src/Plugins.ForwardAPI/Plugins.ForwardAPI.csproj'),
-    [ValidatePattern('^[a-z0-9][a-z0-9_-]*$')][string]$PluginKey = 'forwardapi'
+    [ValidatePattern('^[a-z0-9][a-z0-9._-]*$')][string]$PluginKey = 'forwardapi'
 )
 $ErrorActionPreference = 'Stop'
 $projectFile = (Resolve-Path -LiteralPath $Project).Path
@@ -41,16 +41,27 @@ foreach ($file in Get-ChildItem -LiteralPath $source -File -Recurse) {
     New-Item -ItemType Directory -Force -Path ([IO.Path]::GetDirectoryName($destination)) | Out-Null
     Copy-Item -LiteralPath $file.FullName -Destination $destination
 }
-$entryDll = Join-Path $output "$projectName.dll"
-if (-not (Test-Path -LiteralPath $entryDll)) { throw "未产生入口 DLL：$entryDll" }
 $projectXml = [xml](Get-Content -LiteralPath $projectFile -Raw)
+$assemblyNameNode = $projectXml.SelectSingleNode('/Project/PropertyGroup/AssemblyName')
+$assemblyName = if ($null -eq $assemblyNameNode -or [string]::IsNullOrWhiteSpace([string]$assemblyNameNode.InnerText)) {
+    $projectName
+} else {
+    ([string]$assemblyNameNode.InnerText).Trim()
+}
+$entryDll = Join-Path $output "$assemblyName.dll"
+if (-not (Test-Path -LiteralPath $entryDll)) { throw "未产生入口 DLL：$entryDll" }
 $descriptionNode = $projectXml.SelectSingleNode('/Project/PropertyGroup/Description')
 $description = if ($null -eq $descriptionNode) { '' } else { [string]$descriptionNode.InnerText }
+$packageName = if ($projectName.StartsWith('Plugins.', [StringComparison]::Ordinal)) {
+    $projectName.Substring('Plugins.'.Length)
+} else {
+    $projectName
+}
 if (-not [string]::IsNullOrWhiteSpace($description)) {
     [ordered]@{
         schemaVersion = 1
         id = $PluginKey
-        name = $projectName.Substring('Plugins.'.Length)
+        name = $packageName
         description = $description.Trim()
         runtime = 'dotnet'
         version = [Reflection.AssemblyName]::GetAssemblyName($entryDll).Version.ToString()

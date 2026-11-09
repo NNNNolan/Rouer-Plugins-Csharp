@@ -1,26 +1,31 @@
 #requires -Version 7
 <#
 .SYNOPSIS
-扫描 src/Plugins.* 项目，逐个生成独立发行目录，不安装或重载宿主。
+扫描 src/Plugins.* 与 src/Power.* 项目，逐个生成独立发行目录，不安装或重载宿主。
 #>
 param(
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
     [string]$OutputDirectory = (Join-Path $PSScriptRoot 'artifacts/plugins')
 )
 $ErrorActionPreference = 'Stop'
-$projects = @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'src') -Recurse -File -Filter 'Plugins.*.csproj' |
+$projects = @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'src') -Recurse -File -Filter '*.csproj' |
+    Where-Object { $_.BaseName -like 'Plugins.*' -or $_.BaseName -like 'Power.*' } |
     Sort-Object FullName)
-if ($projects.Count -eq 0) { throw 'src 中没有找到 Plugins.*.csproj 插件项目。' }
+if ($projects.Count -eq 0) { throw 'src 中没有找到 Plugins.* 或 Power.* 插件项目。' }
 
 $outputRoot = [IO.Path]::GetFullPath($OutputDirectory)
 $plugins = @($projects | ForEach-Object {
     [pscustomobject]@{
         Project = $_.FullName
-        Key = $_.BaseName.Substring('Plugins.'.Length).ToLowerInvariant()
+        Key = $(if ($_.BaseName -like 'Plugins.*') {
+            $_.BaseName.Substring('Plugins.'.Length)
+        } else {
+            $_.BaseName
+        }).ToLowerInvariant()
     }
 })
 foreach ($plugin in $plugins) {
-    if ($plugin.Key -notmatch '^[a-z0-9][a-z0-9_-]*$') { throw "无效插件名：$($plugin.Project)" }
+    if ($plugin.Key -notmatch '^[a-z0-9][a-z0-9._-]*$') { throw "无效插件名：$($plugin.Project)" }
     $target = Join-Path $outputRoot $plugin.Key
     if ((Test-Path -LiteralPath $target) -and @(Get-ChildItem -LiteralPath $target -Force).Count -ne 0) {
         throw "发行目录不为空：$target。请用 -OutputDirectory 指定新的发行目录，不合并旧包。"
